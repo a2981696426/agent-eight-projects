@@ -140,7 +140,7 @@ describe('GitHub Pages delivery contract', () => {
     expect(new Set(actionRefs)).toEqual(
       new Set([
         'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-        'pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1',
+        'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86',
         'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
         'actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d',
         'actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9',
