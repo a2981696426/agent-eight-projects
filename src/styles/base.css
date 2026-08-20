@@ -1,0 +1,130 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 2rem;
+  font-size: 16px;
+  background: var(--paper);
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--paper-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+body::before {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 4px;
+  background: var(--forest);
+  content: "";
+  pointer-events: none;
+  transform: scaleX(var(--reading-progress));
+  transform-origin: left center;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+ol,
+ul,
+dl {
+  margin-top: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--ink);
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+h1,
+h2 {
+  font-family: "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", STSong, Georgia, serif;
+  font-weight: 700;
+}
+
+h1 {
+  max-width: 15ch;
+  margin-bottom: 1.5rem;
+  font-size: clamp(2.45rem, 6vw, 5rem);
+  letter-spacing: -0.045em;
+}
+
+h2 {
+  margin-bottom: 1.5rem;
+  font-size: clamp(1.85rem, 3vw, 2.75rem);
+  letter-spacing: -0.025em;
+}
+
+h3 {
+  margin-bottom: 0.75rem;
+  font-size: 1.18rem;
+}
+
+h4 {
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+}
+
+p,
+li,
+dd {
+  overflow-wrap: anywhere;
+}
+
+p {
+  max-width: 72ch;
+  margin-bottom: 1rem;
+}
+
+a {
+  color: var(--forest);
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.08em;
+}
+
+a:hover {
+  text-decoration-thickness: 0.16em;
+}
+
+:focus-visible {
+  border-radius: 2px;
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+strong {
+  font-weight: 700;
+}
+
+::selection {
+  color: var(--paper-raised);
+  background: var(--forest);
+}

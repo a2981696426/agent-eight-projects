@@ -1,0 +1,11 @@
+dist/
+coverage/
+test-results/
+playwright-report/
+.superpowers/
+.firecrawl/
+docs/
+CONTEXT.md
+.env*
+!.env.example
+node_modules/

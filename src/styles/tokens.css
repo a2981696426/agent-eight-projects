@@ -1,0 +1,39 @@
+:root {
+  color-scheme: light dark;
+  --paper: #f3efe3;
+  --paper-raised: #fbf8ef;
+  --ink: #1c2b22;
+  --ink-muted: #5f6961;
+  --line: #d5cebb;
+  --forest: #176b4a;
+  --forest-soft: #dfece2;
+  --audit: #a34819;
+  --audit-soft: #f3dfcf;
+  --confirmed: #176b4a;
+  --inferred: #a75b00;
+  --editorial: #315f9f;
+  --reading-progress: 0;
+  --paper-grid: rgb(28 43 34 / 7%);
+  --surface-shadow: rgb(28 43 34 / 14%);
+  --focus-ring: #b95c24;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #151a17;
+    --paper-raised: #202722;
+    --ink: #edf3ed;
+    --ink-muted: #aab7ad;
+    --line: #3b463e;
+    --forest: #6ad3a5;
+    --forest-soft: #19392b;
+    --audit: #f0a06a;
+    --audit-soft: #3a241b;
+    --confirmed: #6ad3a5;
+    --inferred: #f0b261;
+    --editorial: #83b4f3;
+    --paper-grid: rgb(237 243 237 / 7%);
+    --surface-shadow: rgb(0 0 0 / 32%);
+    --focus-ring: #f0a06a;
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "agent-eight-projects-knowledge-reconstruction",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run && pnpm test:vite-native-config",
+    "test:vite-native-config": "vite build --configLoader native --outDir test-results/native-config-build",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "verify": "pnpm test && pnpm build && pnpm test:e2e",
+    "screenshots": "playwright test --grep \"captures approved verification screenshots\""
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "@vitest/coverage-v8": "4.1.11",
+    "jsdom": "29.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.11",
+    "yaml": "2.9.0"
+  }
+}
