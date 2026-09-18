@@ -254,13 +254,16 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       items.push(await ctx.tools.execute(name, args, { conversationId: ctx.conversation.id, customerId: ctx.conversation.customerId, traceId: ctx.traceId }, ++seq));
     }
     const businessTools = pack.tools.filter((t) => agent.tools.includes(t));
-    const okBusiness = items.filter((i) => i.ok && businessTools.includes(i.tool)).length;
-    const completeness = businessTools.length ? okBusiness / businessTools.length : 1;
+    const attempted = items.filter((i) => businessTools.includes(i.tool));
+    const okBusiness = attempted.filter((i) => i.ok).length;
+    // 完整度只衡量「已尝试」的业务工具；因缺查询键而未尝试的另行记录，不当作工具失败
+    const completeness = attempted.length ? okBusiness / attempted.length : businessTools.length ? 0 : 1;
+    const unattempted = businessTools.filter((t) => !attempted.some((i) => i.tool === t));
     trace.evidence = items;
     return {
       summary: items.length ? `调用 ${items.length} 个工具，成功 ${items.filter((i) => i.ok).length}；业务证据完整度 ${(completeness * 100).toFixed(0)}%${skipped.length ? `；跳过：${skipped.map((s) => `${s.tool}(${s.reason})`).join('，')}` : ''}` : `无可调用工具${skipped.length ? `（${skipped.map((s) => `${s.tool}:${s.reason}`).join('，')}）` : ''}`,
-      detail: { items, skipped, completeness },
-      value: { items, completeness, skipped },
+      detail: { items, skipped, completeness, attempted: attempted.length, unattempted },
+      value: { items, completeness, skipped, attempted: attempted.length, unattempted },
     };
   });
   if (!evidence) return finish();
@@ -426,7 +429,8 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     if (intent.out.confidence < 0.5) bump('L2', `意图置信度过低 ${intent.out.confidence.toFixed(2)}`);
     else if (intent.out.confidence < 0.7) bump('L1', `意图置信度偏低 ${intent.out.confidence.toFixed(2)}`);
     const businessTools = pack.tools.filter((t) => agent.tools.includes(t));
-    if (businessTools.length && !intent.missing.length && evidence.completeness < 1) bump('L2', `业务证据不完整（${(evidence.completeness * 100).toFixed(0)}%），存在工具失败或未命中`);
+    if (businessTools.length && evidence.attempted > 0 && evidence.completeness < 1) bump('L2', `业务证据不完整（${(evidence.completeness * 100).toFixed(0)}%），存在工具失败或未命中`);
+    else if (businessTools.length && evidence.attempted === 0 && !intent.missing.length && action !== 'clarify') bump('L1', `无可用业务证据（${evidence.unattempted.join('/')} 缺少查询键），结论只能基于用户自述与知识`);
     if (pack.id === 'presale' && action !== 'clarify' && knowledge.retrievalConfidence < agent.retrieval.minScore) bump('L2', `售前作答但知识置信度不足 ${knowledge.retrievalConfidence.toFixed(2)}`);
     if (action === 'clarify' && intent.missing.length) bump('L0', '仅追问缺失信息，不含业务结论');
     if (trace.status === 'failed') bump('L2', '执行链存在失败阶段');

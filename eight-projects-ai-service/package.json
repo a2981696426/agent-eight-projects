@@ -10,11 +10,11 @@
   },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"pnpm --filter @eight/api dev\" \"pnpm --filter @eight/web dev\"",
-    "build": "pnpm -r --filter ./packages/** --filter ./apps/** build",
-    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
     "seed": "pnpm --filter @eight/api seed",
     "start": "pnpm --filter @eight/api start",
-    "test": "pnpm -r --filter ./packages/** test",
+    "test": "pnpm --filter @eight/agent-core test",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm e2e"
   },
