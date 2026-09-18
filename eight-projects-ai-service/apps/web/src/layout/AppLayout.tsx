@@ -105,7 +105,7 @@ export default function AppLayout() {
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: '#cbd5e1', fontSize: 12 }}>
           <Tooltip title="大模型连接状态（兼容 OpenAI 协议）">
             <Tag color={health?.llm.configured ? 'green' : 'red'} icon={<ApiOutlined />}>
-              {health ? (health.llm.configured ? `LLM · ${health.llm.modelFast}` : 'LLM 未配置') : '连接中…'}
+              {health ? (health.llm.configured ? `LLM · ${health.llm.modelFast}` : 'LLM 不可用 · 规则降级') : '连接中…'}
             </Tag>
           </Tooltip>
           <Tag icon={<MessageOutlined />} color="blue">

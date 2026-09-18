@@ -1,12 +1,22 @@
-import { BM25Index, LlmClient, ToolRegistry, runChain, type ChainContext } from '@eight/agent-core';
-import type { AgentConfig, Conversation, Customer, KnowledgeChunk, Message, Trace } from '@eight/shared';
+import { BM25Index, LlmClient, LlmRouter, MockLlmClient, ToolRegistry, runChain, type ChainContext, type LlmBase } from '@eight/agent-core';
+import type { AgentConfig, Conversation, Customer, KnowledgeChunk, Message, StageRecord, Trace } from '@eight/shared';
 import { J, nowIso, openDb, uid } from '../db.ts';
 import { env } from '../env.ts';
 import { DEFAULT_AGENT } from '../seed.ts';
 
 const db = () => openDb();
 
-export const llm = new LlmClient({ ...env.llm, timeoutMs: 90_000 });
+/* ───────────── 模型路由：主 provider → 备用 provider；LLM_MOCK=1 时只用离线假模型 ───────────── */
+function buildRouter() {
+  const providers: (LlmBase & { id: string })[] = [];
+  if (env.llmMock) providers.push(new MockLlmClient());
+  else {
+    providers.push(new LlmClient({ id: 'primary', ...env.llm }));
+    if (env.llmFallback.baseUrl && env.llmFallback.apiKey && env.llmFallback.modelFast) providers.push(new LlmClient({ id: 'fallback', ...env.llmFallback, timeoutMs: env.llm.timeoutMs }));
+  }
+  return new LlmRouter(providers, env.router);
+}
+export const llm = buildRouter();
 
 /* ───────────── 知识索引（发布态 chunk） ───────────── */
 let index: BM25Index | null = null;
@@ -183,7 +193,7 @@ export function appendMessage(conversationId: string, role: Message['role'], tex
   return { id, conversationId, role, text, at, traceId: extra.traceId ?? null, meta: extra.meta ?? null } as Message;
 }
 export function saveTrace(t: Trace) {
-  db().run('INSERT OR REPLACE INTO traces VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', t.id, t.conversationId, t.agentId, t.agentVersion, t.createdAt, t.scenario, t.intent, t.autonomy?.decision ?? null, t.risk?.level ?? null, t.totalDurationMs, t.status, J.str(t));
+  db().run('INSERT OR REPLACE INTO traces (id,conversation_id,agent_id,agent_version,created_at,scenario,intent,decision,risk_level,duration_ms,status,doc,degraded,failed_over,llm_calls) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', t.id, t.conversationId, t.agentId, t.agentVersion, t.createdAt, t.scenario, t.intent, t.autonomy?.decision ?? null, t.risk?.level ?? null, t.totalDurationMs, t.status, J.str(t), t.degraded ? 1 : 0, t.failedOver ? 1 : 0, t.usage.calls);
 }
 export function loadTrace(id: string): Trace | null {
   const r = db().get<{ doc: string }>('SELECT doc FROM traces WHERE id=?', id);
@@ -196,6 +206,8 @@ export interface RunOptions {
   /** bot：机器人接待，自主回复直接落库；assist：坐席辅助，仅返回建议 */
   mode: 'bot' | 'assist';
   persistUserMessage?: boolean;
+  /** 阶段进度回调（SSE） */
+  onStage?: (stage: StageRecord, trace: Trace) => void;
 }
 
 export async function runForConversation(conversationId: string, text: string, opts: RunOptions) {
@@ -222,6 +234,7 @@ export async function runForConversation(conversationId: string, text: string, o
     customer,
     history,
     traceId: uid('tr-'),
+    onStage: opts.onStage,
   };
   const trace = await runChain(ctx, { text });
   saveTrace(trace);

@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, App, Button, Card, Col, Input, Row, Select, Space, Tag, Typography } from 'antd';
 import { ExportOutlined, SendOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { Conversation, Customer, Message, Trace } from '@eight/shared';
-import { api, fmtShort } from '../../api';
+import { STAGE_LABELS } from '@eight/shared';
+import { api, fmtShort, streamChat, type StageProgress } from '../../api';
 import TraceViewer from '../../components/TraceViewer';
+
+const STAGE_IDS = Object.keys(STAGE_LABELS) as (keyof typeof STAGE_LABELS)[];
 
 const QUICK = ['订单 20260918000123 的快递三天没动了', '我的快递到哪了', '20260917000789 的专票开了吗', '发票抬头写错了想换开，订单 20260915000456', '20260910000321 刚买就降价了能退差价吗', '这个传感器洗澡能戴吗', 'OPPO 手机能激活吗', '你们态度太差了我要投诉', '转人工'];
 
@@ -17,6 +20,7 @@ export default function OnlineRobot() {
   const [trace, setTrace] = useState<Trace | null>(null);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<StageProgress[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -51,12 +55,14 @@ export default function OnlineRobot() {
     const value = (t ?? text).trim();
     if (!value || busy) return;
     setBusy(true);
+    setProgress([]);
     setText('');
     try {
       const c = await ensureConv();
       const optimistic: Message = { id: `tmp-${Date.now()}`, conversationId: c.id, role: 'user', text: value, at: new Date().toISOString() };
       setMessages((m) => [...m, optimistic]);
-      const r = await api<{ message: Message; botMessage: Message | null; trace: Trace | null; conversation: Conversation }>(`/api/conversations/${c.id}/messages`, { method: 'POST', body: { role: 'user', text: value } });
+      // SSE 流式：逐阶段推送进度，结束时返回与非流式接口相同的结果
+      const r = await streamChat<{ message: Message; botMessage: Message | null; trace: Trace | null; conversation: Conversation }>(c.id, value, (s) => setProgress((p) => [...p.filter((x) => x.id !== s.id), s]));
       setConv(r.conversation);
       setTrace(r.trace);
       const detail = await api<{ messages: Message[] }>(`/api/conversations/${c.id}`);
@@ -66,6 +72,7 @@ export default function OnlineRobot() {
       message.error((e as Error).message);
     } finally {
       setBusy(false);
+      setProgress([]);
     }
   }
   function reset() {
@@ -121,7 +128,22 @@ export default function OnlineRobot() {
                       </span>
                     </div>
                   ))}
-                {busy && <div className="bubble bot">正在思考：识别意图 → 查证据 → 检索知识 → 推理 → 风险分级…</div>}
+                {busy && (
+                  <div className="bubble bot">
+                    正在处理（流式进度）
+                    <div className="chain-progress">
+                      {STAGE_IDS.map((id) => {
+                        const done = progress.find((p) => p.id === id);
+                        return (
+                          <span key={id} className={done ? '' : 'pending'}>
+                            {STAGE_LABELS[id]}
+                            {done ? ` ${done.durationMs}ms` : ''}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ padding: 10, borderTop: '1px solid #f0f0f0' }}>

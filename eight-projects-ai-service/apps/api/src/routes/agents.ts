@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { SCENARIO_PACKS } from '@eight/agent-core';
 import type { AgentConfig } from '@eight/shared';
 import { J, nowIso, openDb, uid } from '../db.ts';
-import { loadAgent, runStandalone, tools } from '../services/chain.ts';
+import { llm, loadAgent, runStandalone, tools } from '../services/chain.ts';
 import { DEFAULT_AGENT } from '../seed.ts';
 
 const db = () => openDb();
@@ -22,6 +22,26 @@ const AgentBody = z.object({
 });
 
 export async function agentRoutes(app: FastifyInstance) {
+  /* ───── 模型 provider 状态 / 故障演练 ───── */
+  app.get('/api/llm/status', async () => ({
+    configured: llm.configured,
+    providers: llm.status(),
+    events: llm.events.slice(-30).reverse(),
+    stats: {
+      degradedTraces: db().get<{ n: number }>('SELECT COUNT(*) n FROM traces WHERE degraded=1')?.n ?? 0,
+      failedOverTraces: db().get<{ n: number }>('SELECT COUNT(*) n FROM traces WHERE failed_over=1')?.n ?? 0,
+      traces: db().count('traces'),
+      avgChainMs: db().get<{ v: number }>('SELECT ROUND(AVG(duration_ms)) v FROM traces')?.v ?? 0,
+      avgChainMsRecent20: db().get<{ v: number }>('SELECT ROUND(AVG(duration_ms)) v FROM (SELECT duration_ms FROM traces ORDER BY created_at DESC LIMIT 20)')?.v ?? 0,
+    },
+  }));
+  app.post('/api/llm/simulate', async (req) => {
+    const b = z.object({ mode: z.enum(['normal', 'primary_down', 'all_down']) }).parse(req.body);
+    const status = llm.simulate(b.mode);
+    db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), 'admin', 'llm.simulate', b.mode, J.str(status));
+    return { mode: b.mode, providers: status, configured: llm.configured };
+  });
+
   app.get('/api/agents', async () => db().all('SELECT id, name, version, status, updated_at FROM agents ORDER BY updated_at DESC'));
   app.get('/api/agents/meta', async () => ({ scenarios: SCENARIO_PACKS, tools: tools.list(), models: [{ id: 'deepseek-flash', label: 'DeepSeek Flash（快/推理双模式）' }, { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }] }));
   app.get('/api/agents/:id', async (req, reply) => {

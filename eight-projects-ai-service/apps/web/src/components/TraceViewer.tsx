@@ -44,6 +44,8 @@ export default function TraceViewer({ trace, compact = false }: { trace: Trace |
         <Tag>
           LLM {trace.usage.calls} 次 · {trace.usage.promptTokens + trace.usage.completionTokens} tokens
         </Tag>
+        {trace.providers?.length ? <Tag color={trace.failedOver ? 'orange' : 'default'}>provider {trace.providers.join('→')}{trace.failedOver ? ' · 已切换' : ''}</Tag> : null}
+        {trace.degraded && <Tag color="volcano">规则降级：{trace.degradedReason}</Tag>}
         <Typography.Text type="secondary" className="mono">
           {trace.id}
         </Typography.Text>

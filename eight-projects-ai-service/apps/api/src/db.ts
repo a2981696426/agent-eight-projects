@@ -68,7 +68,18 @@ CREATE TABLE IF NOT EXISTS benchmark_cases(id TEXT PRIMARY KEY, text TEXT, expec
 CREATE TABLE IF NOT EXISTS benchmark_runs(id TEXT PRIMARY KEY, agent_id TEXT, agent_version INTEGER, created_at TEXT, doc TEXT);
 CREATE TABLE IF NOT EXISTS audit_log(id TEXT PRIMARY KEY, at TEXT, actor TEXT, action TEXT, target TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS employee_runs(id TEXT PRIMARY KEY, employee TEXT, trace_id TEXT, conversation_id TEXT, created_at TEXT, decision TEXT, risk_level TEXT, summary TEXT);
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE, password_hash TEXT, salt TEXT, name TEXT, role TEXT, disabled INTEGER DEFAULT 0, created_at TEXT, last_login_at TEXT);
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id TEXT, created_at TEXT, expires_at TEXT, user_agent TEXT);
 `);
+    // 增量列（幂等）
+    for (const [table, column, ddl] of [
+      ['traces', 'degraded', 'INTEGER DEFAULT 0'],
+      ['traces', 'failed_over', 'INTEGER DEFAULT 0'],
+      ['traces', 'llm_calls', 'INTEGER DEFAULT 0'],
+    ] as const) {
+      const cols = this.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name);
+      if (!cols.includes(column)) this.sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
   }
 }
 

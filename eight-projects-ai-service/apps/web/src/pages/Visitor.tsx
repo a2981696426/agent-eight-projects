@@ -3,7 +3,7 @@ import { App, Button, Input, Rate, Select, Space, Tag, Tooltip } from 'antd';
 import { CustomerServiceOutlined, PlusOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { Conversation, Customer, Message } from '@eight/shared';
-import { api, fmtShort } from '../api';
+import { api, fmtShort, streamChat, type StageProgress } from '../api';
 
 const STORAGE_KEY = 'eight.visitor.conversationId';
 const QUICK = ['我的快递到哪了', '发票什么时候开', '刚买就降价了能退差价吗', '这个传感器洗澡能戴吗', '转人工'];
@@ -29,6 +29,7 @@ export default function Visitor() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [progress, setProgress] = useState<StageProgress[]>([]);
   const [rated, setRated] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -85,14 +86,16 @@ export default function Visitor() {
     const value = (t ?? text).trim();
     if (!value || !id || sending) return;
     setSending(true);
+    setProgress([]);
     setText('');
     try {
-      await api(`/api/conversations/${id}/messages`, { method: 'POST', body: { role: 'user', text: value } });
+      await streamChat(id, value, (s) => setProgress((p) => [...p.filter((x) => x.id !== s.id), s]));
       await load();
     } catch (e) {
       message.error((e as Error).message);
     } finally {
       setSending(false);
+      setProgress([]);
     }
   }
   async function rate(score: number) {
@@ -153,7 +156,11 @@ export default function Visitor() {
               {sending && (
                 <div className="vmsg them">
                   <div className="avatar bot"><RobotOutlined /></div>
-                  <div><div className="who">智能客服</div><div className="vbubble bot typing"><span /><span /><span /></div></div>
+                  <div>
+                    <div className="who">智能客服</div>
+                    <div className="vbubble bot typing"><span /><span /><span /></div>
+                    <div className="vprogress">{progress.length ? `已完成 ${progress.length}/9：${progress[progress.length - 1].label}` : '正在接收…'}</div>
+                  </div>
                 </div>
               )}
               {closed && (

@@ -78,6 +78,43 @@ export async function conversationRoutes(app: FastifyInstance) {
     return { message: r.userMessage, botMessage: r.botMessage, trace: r.trace, conversation: r.conversation };
   });
 
+  /**
+   * 流式版本：以 SSE 逐阶段推送执行链进度（event: stage / done / error）。
+   * 借鉴多智能体创作平台的 SSE 推送：把 8~14s 的等待变成可见进度。用 fetch 流式读取（POST 不能用 EventSource）。
+   */
+  app.post('/api/conversations/:id/messages/stream', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ role: z.literal('user'), text: z.string().min(1).max(4000) }).parse(req.body);
+    const row = db().get('SELECT * FROM conversations WHERE id=?', id);
+    if (!row) return reply.code(404).send({ error: '会话不存在' });
+    if (row.status === 'closed') return reply.code(409).send({ error: '会话已结束，请先重新打开' });
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    const send = (event: string, data: unknown) => {
+      if (!raw.writableEnded) raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const heartbeat = setInterval(() => !raw.writableEnded && raw.write(': ping\n\n'), 10_000);
+    try {
+      if (row.controller !== 'bot') {
+        const m = appendMessage(id, 'user', body.text);
+        send('done', { message: m, botMessage: null, trace: null, conversation: rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!) });
+      } else {
+        send('accepted', { at: nowIso() });
+        const r = await runForConversation(id, body.text, {
+          mode: 'bot',
+          onStage: (stage) => send('stage', { id: stage.id, label: stage.label, status: stage.status, durationMs: stage.durationMs, summary: stage.summary }),
+        });
+        send('done', { message: r.userMessage, botMessage: r.botMessage, trace: r.trace, conversation: r.conversation });
+      }
+    } catch (e) {
+      send('error', { error: (e as Error).message });
+    } finally {
+      clearInterval(heartbeat);
+      raw.end();
+    }
+  });
+
   /** 坐席辅助：基于最后一条用户消息生成建议（不落库为消息） */
   app.post('/api/conversations/:id/assist', async (req, reply) => {
     const { id } = req.params as { id: string };

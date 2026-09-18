@@ -30,8 +30,15 @@ export async function buildServer() {
   app.get('/api/health', async () => ({
     status: 'ok',
     product: 'eight-projects-ai-service',
-    version: '0.1.0',
-    llm: { configured: llm.configured, baseUrl: env.llm.baseUrl, modelFast: env.llm.modelFast, modelReasoning: env.llm.modelReasoning },
+    version: '0.2.0',
+    llm: {
+      configured: llm.configured,
+      mock: env.llmMock,
+      baseUrl: env.llm.baseUrl,
+      modelFast: env.llm.modelFast,
+      modelReasoning: env.llm.modelReasoning,
+      providers: llm.status().map((p) => ({ id: p.id, circuit: p.circuit, configured: p.configured, simulatedDown: p.simulatedDown, calls: p.stats.calls, failures: p.stats.failures, avgMs: p.stats.avgMs })),
+    },
     knowledgeIndexed: knowledgeIndex().size,
     time: new Date().toISOString(),
   }));

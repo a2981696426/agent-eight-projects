@@ -19,10 +19,29 @@ for (const candidate of [resolve(ROOT_DIR, '.env'), resolve(here, '../.env')]) {
 export const env = {
   apiPort: Number(process.env.API_PORT ?? 8787),
   dataDir: resolve(here, '..', process.env.DATA_DIR ?? '../../data'),
+  /** 生产模式：API 托管 apps/web/dist（单端口部署） */
+  serveWeb: process.env.SERVE_WEB === '1' || process.env.NODE_ENV === 'production',
+  webDist: resolve(ROOT_DIR, 'apps/web/dist'),
+  sessionSecret: process.env.SESSION_SECRET ?? 'eight-projects-dev-secret-change-me-32chars',
   llm: {
     baseUrl: process.env.LLM_BASE_URL ?? 'https://api.deepseek.com',
     apiKey: process.env.LLM_API_KEY ?? '',
     modelFast: process.env.LLM_MODEL_FAST ?? 'deepseek-flash',
     modelReasoning: process.env.LLM_MODEL_REASONING ?? 'deepseek-flash',
+    timeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 60_000),
+  },
+  /** 备用 provider（可选）：任何兼容 OpenAI 协议的端点；主 provider 熔断/失败时自动切换 */
+  llmFallback: {
+    baseUrl: process.env.LLM_FALLBACK_BASE_URL ?? '',
+    apiKey: process.env.LLM_FALLBACK_API_KEY ?? '',
+    modelFast: process.env.LLM_FALLBACK_MODEL_FAST ?? process.env.LLM_FALLBACK_MODEL ?? '',
+    modelReasoning: process.env.LLM_FALLBACK_MODEL_REASONING ?? process.env.LLM_FALLBACK_MODEL ?? '',
+  },
+  /** LLM_MOCK=1：离线确定性假模型（e2e / 无网络演示），不会与真实 provider 混用 */
+  llmMock: process.env.LLM_MOCK === '1',
+  router: {
+    failureThreshold: Number(process.env.LLM_CIRCUIT_FAILURES ?? 3),
+    cooldownMs: Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 30_000),
+    maxRetries: Number(process.env.LLM_MAX_RETRIES ?? 1),
   },
 };

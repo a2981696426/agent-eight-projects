@@ -10,6 +10,12 @@ interface Meta {
   tools: { name: string; label: string; description: string; requires: string[]; mutating?: boolean }[];
   models: { id: string; label: string }[];
 }
+interface LlmStatus {
+  configured: boolean;
+  providers: { id: string; configured: boolean; models: { fast: string; reasoning: string; baseUrl: string } | null; circuit: 'closed' | 'open' | 'half_open'; consecutiveFailures: number; openedAt: string | null; stats: { calls: number; failures: number; avgMs: number; lastError: string | null; lastSuccessAt: string | null }; simulatedDown: boolean }[];
+  events: { at: string; type: string; provider: string; detail: string }[];
+  stats: { degradedTraces: number; failedOverTraces: number; traces: number; avgChainMs: number; avgChainMsRecent20: number };
+}
 interface BenchRun {
   id: string;
   agentVersion: number;
@@ -34,6 +40,12 @@ export default function AgentStudio() {
   const [busy, setBusy] = useState<string | null>(null);
   const { data: bench, reload: reloadBench } = useApi<{ cases: { id: string; text: string; expected_scenario: string; expected_decision: string; note: string }[]; runs: BenchRun[] }>(`/api/agents/${AGENT_ID}/benchmarks`);
   const [lastRun, setLastRun] = useState<BenchRun | null>(null);
+  const { data: llmStatus, reload: reloadLlm } = useApi<LlmStatus>('/api/llm/status', { pollMs: 8000 });
+  async function simulate(mode: 'normal' | 'primary_down' | 'all_down') {
+    await api('/api/llm/simulate', { method: 'POST', body: { mode } });
+    await reloadLlm();
+    message.success({ normal: '已恢复正常', primary_down: '已模拟主模型故障：请求将切换到备用 provider（若无备用则进入规则降级）', all_down: '已模拟全部模型故障：执行链进入规则降级并转人工' }[mode]);
+  }
 
   useEffect(() => {
     if (agentData) form.setFieldsValue({ ...agentData.agent, handoffKeywords: agentData.agent.handoffRules.keywords.join(','), maxBotTurns: agentData.agent.handoffRules.maxBotTurns });
@@ -239,6 +251,45 @@ export default function AgentStudio() {
                   </Card>
                 )}
               </>
+            ),
+          },
+          {
+            key: 'llm',
+            label: '模型与高可用',
+            children: (
+              <Row gutter={12}>
+                <Col xs={24} lg={14}>
+                  <Card size="small" title="Provider 路由状态" extra={<Tag color={llmStatus?.configured ? 'green' : 'red'}>{llmStatus?.configured ? '可用' : '全部不可用 → 规则降级'}</Tag>}>
+                    <Table size="small" rowKey="id" pagination={false} dataSource={llmStatus?.providers ?? []} columns={[
+                      { title: 'Provider', dataIndex: 'id', width: 100, render: (v, r) => <span>{v}{r.simulatedDown && <Tag color="red" style={{ marginLeft: 6 }}>演练故障</Tag>}</span> },
+                      { title: '模型', render: (_v, r) => r.models ? <span className="mono" style={{ fontSize: 12 }}>{r.models.fast}{r.models.fast !== r.models.reasoning ? ` / ${r.models.reasoning}` : ''}<br />{r.models.baseUrl}</span> : '—' },
+                      { title: '熔断', dataIndex: 'circuit', width: 90, render: (v) => <Tag color={{ closed: 'green', half_open: 'orange', open: 'red' }[v as string]}>{{ closed: '闭合', half_open: '半开', open: '熔断' }[v as string]}</Tag> },
+                      { title: '调用/失败', width: 100, render: (_v, r) => `${r.stats.calls} / ${r.stats.failures}` },
+                      { title: '平均耗时', width: 90, render: (_v, r) => `${r.stats.avgMs} ms` },
+                      { title: '最近错误', dataIndex: ['stats', 'lastError'], ellipsis: true, render: (v) => v ?? '—' },
+                    ]} />
+                    <Space style={{ marginTop: 10 }} wrap>
+                      <span>故障演练：</span>
+                      <Button size="small" onClick={() => simulate('primary_down')}>模拟主模型故障</Button>
+                      <Button size="small" danger onClick={() => simulate('all_down')}>模拟全部模型故障</Button>
+                      <Button size="small" type="primary" onClick={() => simulate('normal')}>恢复正常</Button>
+                    </Space>
+                    <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                      策略：可重试错误（超时/网络/429/5xx）在同一 provider 指数退避重试 → 用尽后切换下一个 provider；连续失败达阈值即熔断并冷却后半开试探；401 直接切换；全部不可用时执行链进入<b>规则降级</b>（关键词识别场景、只陈述工具事实、强制人工确认），不让服务中断。备用 provider 通过 <code>LLM_FALLBACK_*</code> 配置。
+                    </Typography.Paragraph>
+                  </Card>
+                </Col>
+                <Col xs={24} lg={10}>
+                  <Row gutter={[12, 12]}>
+                    {[['执行链总数', llmStatus?.stats.traces], ['平均耗时(全部)', `${llmStatus?.stats.avgChainMs ?? 0} ms`], ['平均耗时(近20)', `${llmStatus?.stats.avgChainMsRecent20 ?? 0} ms`], ['发生切换', llmStatus?.stats.failedOverTraces], ['规则降级', llmStatus?.stats.degradedTraces]].map(([l, v]) => (
+                      <Col key={String(l)} xs={12}><div className="kpi"><div className="label">{l}</div><div className="value" style={{ fontSize: 20 }}>{v ?? '—'}</div></div></Col>
+                    ))}
+                  </Row>
+                  <Card size="small" title="路由事件" style={{ marginTop: 12 }}>
+                    {llmStatus?.events.length ? llmStatus.events.map((e, i) => <div key={i} style={{ fontSize: 12, padding: '3px 0', borderBottom: '1px dashed #f0f0f0' }}><Tag color={e.type === 'circuit_open' || e.type === 'all_down' ? 'red' : e.type === 'failover' ? 'orange' : 'green'}>{e.type}</Tag>{e.provider} · {e.detail} <span style={{ color: '#9ca3af' }}>{fmtTime(e.at)}</span></div>) : <Typography.Text type="secondary">暂无切换/熔断事件</Typography.Text>}
+                  </Card>
+                </Col>
+              </Row>
             ),
           },
           {

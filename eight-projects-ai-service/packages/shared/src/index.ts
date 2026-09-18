@@ -81,11 +81,15 @@ export interface StageRecord {
 
 export interface LlmUsage {
   model: string;
+  provider?: string;
   promptTokens: number;
   completionTokens: number;
   reasoningTokens?: number;
+  cachedTokens?: number;
   durationMs: number;
   thinking: boolean;
+  attempts?: number;
+  failedOver?: boolean;
 }
 
 export type RiskLevel = 'L0' | 'L1' | 'L2' | 'L3';
@@ -192,6 +196,12 @@ export interface Trace {
   usage: { promptTokens: number; completionTokens: number; calls: number };
   status: 'completed' | 'failed';
   error?: string | null;
+  /** 模型不可用时进入规则降级：意图用关键词规则、话术用证据模板，强制人工确认 */
+  degraded: boolean;
+  degradedReason: string | null;
+  /** 本次实际使用的 provider（去重），含是否发生切换 */
+  providers: string[];
+  failedOver: boolean;
 }
 
 /** 场景包 = 数字员工。同一条链按场景包切换必填槽位、工具、知识标签与允许动作。 */
