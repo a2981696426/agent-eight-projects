@@ -116,6 +116,10 @@ export class LlmClient {
   /** 结构化输出：json_object 模式 + zod 校验，失败时把校验错误回灌重试一次。 */
   async chatJson<T>(schema: ZodType<T>, messages: ChatMessage[], opts: ChatOptions = {}): Promise<{ value: T; usage: LlmUsage[]; reasoning: string | null }> {
     const usages: LlmUsage[] = [];
+    // OpenAI 兼容端（含 DeepSeek）要求 json_object 模式下提示词中必须出现 "json" 字样
+    if (!messages.some((m) => /json/i.test(m.content))) {
+      messages = messages[0]?.role === 'system' ? [{ ...messages[0], content: `${messages[0].content}\n输出必须是合法的 JSON 对象。` }, ...messages.slice(1)] : [{ role: 'system', content: '输出必须是合法的 JSON 对象。' }, ...messages];
+    }
     let attemptMessages = messages;
     let lastError = '';
     for (let attempt = 0; attempt < 2; attempt++) {

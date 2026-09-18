@@ -95,7 +95,7 @@ export async function managementRoutes(app: FastifyInstance) {
     return { ok: true };
   });
   app.get('/api/quality/report', async () => {
-    const byAgent = db().all<{ agent: string; n: number; avg: number; reviewed: number }>('SELECT COALESCE(agent, "未分配") agent, COUNT(*) n, ROUND(AVG(score),1) avg, SUM(CASE WHEN reviewed_by IS NOT NULL THEN 1 ELSE 0 END) reviewed FROM quality_results GROUP BY agent ORDER BY avg DESC');
+    const byAgent = db().all<{ agent: string; n: number; avg: number; reviewed: number }>(`SELECT COALESCE(agent, '未分配') agent, COUNT(*) n, ROUND(AVG(score),1) avg, SUM(CASE WHEN reviewed_by IS NOT NULL THEN 1 ELSE 0 END) reviewed FROM quality_results GROUP BY agent ORDER BY avg DESC`);
     const all = db().all<{ doc: string }>('SELECT doc FROM quality_results').map((r) => J.parse<QualityResult>(r.doc, null as unknown as QualityResult));
     const ruleHits: Record<string, { name: string; n: number; total: number }> = {};
     for (const r of all) for (const h of r.hits) {
@@ -164,7 +164,7 @@ export async function managementRoutes(app: FastifyInstance) {
     const n = (sql: string, ...p: (string | number)[]) => d.get<{ n: number }>(sql, ...p)?.n ?? 0;
     const traces = d.all<{ decision: string; n: number }>('SELECT decision, COUNT(*) n FROM traces GROUP BY decision');
     const risks = d.all<{ risk_level: string; n: number }>('SELECT risk_level, COUNT(*) n FROM traces WHERE risk_level IS NOT NULL GROUP BY risk_level ORDER BY risk_level');
-    const scenarios = d.all<{ scenario: string; n: number }>('SELECT COALESCE(scenario,"general") scenario, COUNT(*) n FROM traces GROUP BY scenario ORDER BY n DESC');
+    const scenarios = d.all<{ scenario: string; n: number }>(`SELECT COALESCE(scenario,'general') scenario, COUNT(*) n FROM traces GROUP BY scenario ORDER BY n DESC`);
     const hourly = d.all<{ h: string; n: number }>("SELECT substr(at,12,2) h, COUNT(*) n FROM messages WHERE role='user' GROUP BY h ORDER BY h");
     const channels = d.all<{ channel: string; n: number }>('SELECT channel, COUNT(*) n FROM conversations GROUP BY channel ORDER BY n DESC');
     const agents = d.all<{ assignee: string; n: number; sat: number }>('SELECT assignee, COUNT(*) n, ROUND(AVG(satisfaction),2) sat FROM conversations WHERE assignee IS NOT NULL GROUP BY assignee ORDER BY n DESC');
@@ -199,7 +199,7 @@ export async function managementRoutes(app: FastifyInstance) {
       channels,
       agents,
       recentTraces: d.all('SELECT id, conversation_id, created_at, scenario, intent, decision, risk_level, duration_ms FROM traces ORDER BY created_at DESC LIMIT 8'),
-      queue: d.all('SELECT id, title, priority, last_message_at, channel FROM conversations WHERE status="waiting_human" ORDER BY CASE priority WHEN "P0" THEN 0 WHEN "P1" THEN 1 ELSE 2 END, last_message_at ASC LIMIT 8'),
+      queue: d.all(`SELECT id, title, priority, last_message_at, channel FROM conversations WHERE status='waiting_human' ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, last_message_at ASC LIMIT 8`),
     };
   });
 
@@ -249,11 +249,20 @@ export async function managementRoutes(app: FastifyInstance) {
   app.post('/api/voc/ask', async (req) => {
     const b = z.object({ question: z.string().min(2).max(300) }).parse(req.body);
     const d = db();
-    const stats = { topics: d.all('SELECT topic, COUNT(*) n, SUM(CASE WHEN sentiment="negative" THEN 1 ELSE 0 END) neg FROM voc_items GROUP BY topic ORDER BY n DESC'), sentiment: d.all('SELECT sentiment, COUNT(*) n FROM voc_items GROUP BY sentiment'), total: d.count('voc_items') };
-    const kws = b.question.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
-    const samples = d.all<{ text: string; topic: string; sentiment: string }>('SELECT text, topic, sentiment FROM voc_items ORDER BY created_at DESC LIMIT 200').filter((s) => !kws.length || kws.some((k) => s.text.includes(k) || s.topic.includes(k))).slice(0, 25).map((s) => `[${s.topic}/${s.sentiment}] ${s.text}`);
-    const r = await vocAsk(b.question, stats, samples.length ? samples : d.all<{ text: string; topic: string; sentiment: string }>('SELECT text, topic, sentiment FROM voc_items ORDER BY created_at DESC LIMIT 25').map((s) => `[${s.topic}/${s.sentiment}] ${s.text}`));
-    return { ...r, sampleCount: samples.length, stats };
+    const stats = { topics: d.all(`SELECT topic, COUNT(*) n, SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) neg FROM voc_items GROUP BY topic ORDER BY n DESC`), sentiment: d.all('SELECT sentiment, COUNT(*) n FROM voc_items GROUP BY sentiment'), total: d.count('voc_items') };
+    // 关键词：问题中出现的主题名 + 中文二元组，任一命中原声或主题即入选样本；无命中时退回最近样本
+    const all = d.all<{ text: string; topic: string; sentiment: string }>('SELECT text, topic, sentiment FROM voc_items ORDER BY created_at DESC LIMIT 200');
+    const topicsInQ = [...new Set(all.map((s) => s.topic))].filter((t) => b.question.includes(t) || t.split('').some((ch) => b.question.includes(ch) && t.length <= 4 && b.question.includes(t.slice(0, 2))));
+    const han = b.question.replace(/[^\u4e00-\u9fff]/g, '');
+    const bigrams = new Set<string>();
+    for (let i = 0; i < han.length - 1; i++) bigrams.add(han.slice(i, i + 2));
+    const STOP = new Set(['用户', '客户', '什么', '哪些', '是什', '么样', '怎么', '如何', '最不', '不满', '满意', '意的', '的是', '主要', '诉求', '对于', '关于', '一下']);
+    const kws = [...topicsInQ, ...[...bigrams].filter((k) => !STOP.has(k))];
+    const matched = all.filter((s) => kws.some((k) => s.text.includes(k) || s.topic.includes(k)));
+    const chosen = (matched.length ? matched : all).slice(0, 25);
+    const samples = chosen.map((s) => `[${s.topic}/${s.sentiment}] ${s.text}`);
+    const r = await vocAsk(b.question, stats, samples);
+    return { ...r, sampleCount: chosen.length, matchedByKeyword: matched.length, stats };
   });
 
   /* ───────────── 售后数字员工 ───────────── */
