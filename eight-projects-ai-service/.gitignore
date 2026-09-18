@@ -12,3 +12,4 @@ e2e/.auth/
 .DS_Store
 # 上级仓库忽略了 docs/，这里显式保留本项目文档
 !docs/
+artifacts/
