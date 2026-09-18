@@ -15,7 +15,7 @@ dayjs.extend(relativeTime);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#1f6feb', borderRadius: 6, fontFamily: '"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif' } }}>
+    <ConfigProvider locale={zhCN} button={{ autoInsertSpace: false }} theme={{ token: { colorPrimary: '#1f6feb', borderRadius: 6, fontFamily: '"PingFang SC","Microsoft YaHei","Helvetica Neue",Arial,sans-serif' } }}>
       <AntApp>
         <BrowserRouter>
           <App />

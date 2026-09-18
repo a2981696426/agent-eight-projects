@@ -9,7 +9,7 @@ test.describe('系统基座', () => {
     const title = `e2e 工单 ${Date.now()}`;
     await page.getByLabel('标题').fill(title);
     await page.getByLabel('描述').fill('自动化测试创建');
-    await page.getByRole('button', { name: '创 建' }).or(page.getByRole('button', { name: '创建' })).click();
+    await page.getByRole('button', { name: '创建' }).click();
     await expect(page.getByText(title).first()).toBeVisible();
     await page.getByText(title).first().click();
     await page.getByRole('button', { name: '开始处理' }).click();
