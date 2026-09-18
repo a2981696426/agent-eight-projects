@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+data/*.sqlite
+data/*.sqlite-*
+test-results/
+playwright-report/
+e2e/.auth/
+*.log
+.DS_Store
+# 上级仓库忽略了 docs/，这里显式保留本项目文档
+!docs/
+artifacts/

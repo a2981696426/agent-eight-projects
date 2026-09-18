@@ -2,6 +2,10 @@
 
 这是一个面向有后端基础、正在准备 AI 应用开发面试读者的静态学习页。页面是经过来源分级与工程边界审校的知识重建，不是原作者逐字全文，也不声称官方恢复原页面。
 
+## 子项目：八项目 AI 客服系统
+
+`eight-projects-ai-service/` 是一个独立的 pnpm workspace（Node 22 + Fastify + React），以网易云商 AI 客服的产品结构为参照，围绕一条九阶段 Agent 执行链实现在线客服、工单、机器人、Agent/Mind Studio、质检、报表、大屏、客户之声与售后数字员工。它与本学习站不共享运行时；使用与拆出为独立仓库的方法见 [eight-projects-ai-service/README.md](eight-projects-ai-service/README.md)。
+
 ## 在线访问
 
 - 学习页：<https://a2981696426.github.io/agent-eight-projects/>

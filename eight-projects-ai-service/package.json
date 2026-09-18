@@ -1,0 +1,26 @@
+{
+  "name": "eight-projects-ai-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "八项目 AI 客服系统骨架：以网易云商 AI 客服产品结构为参照，围绕一条可验证的 Agent 业务执行链构建的模块化单体。",
+  "type": "module",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"pnpm --filter @eight/api dev\" \"pnpm --filter @eight/web dev\"",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "seed": "pnpm --filter @eight/api seed",
+    "start": "pnpm --filter @eight/api start",
+    "test": "pnpm --filter @eight/agent-core test",
+    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "concurrently": "^10.0.5",
+    "typescript": "^5.9.0"
+  }
+}
