@@ -11,6 +11,7 @@
 | L3 | Mind Studio、Agent Studio、AIGC、呼入机器人、AI 外呼 | 5 条真实流（发布→检索命中；试跑→发布→版本；IVR→执行链；小记；模拟外呼） | 隐藏 Tab 面板中的同名元素导致断言命中不可见节点 → 断言限定 `.ant-tabs-tabpane-active` |
 | L4/L5 | 质检、报表、大屏、客户之声、数字员工 | 5 条流（规则+语义质检→复核；报表切换保存；大屏渲染；VoC 分析→提问；发票智能体沙箱） | ① SQLite 字符串字面量误用双引号 → `/api/quality/report`、`/api/dashboard` 500 → 全部改单引号；② DeepSeek 要求 json_object 模式提示词含 "json" → `chatJson` 自动补充；③ VoC 提问样本关键词匹配为 0 → 主题名 + 二元组 + 停用词过滤，并返回真实样本数；④ 大屏饼图截屏时处于动画中 → `animation:false` |
 | L6 | 全量回归 + 生产构建 + 文档 | 31 条 e2e 全绿（含 8 条真实模型流），`pnpm build` 通过 | 根脚本 `pnpm -r --filter ./packages/**` 在 pnpm 11 语义变化 → 改为 `pnpm -r run build`；bundle 2.6MB → manualChunks 拆分 antd/echarts/react |
+| L7 | 回复语义修正 + 独立访客端 | 新增 `visitor.spec`（开始咨询 → 规则应答 → 人工确认等待提示 → 坐席接管回复轮询可见 → 刷新历史保留 → 结束评价），`chain.spec` 新增「气泡 === 轨迹对客回复」断言；33 条全绿 | 用户反馈：人工确认时访客气泡与轨迹「最终回复」不一致 → `reply.text` 改为实际对客文本、新增 `reply.candidate` 保存候选话术，`chain.ts` 改为单一来源，TraceViewer 分列展示；坐席回复后「在线机器人」页看不到 → 该页改为轮询，并新增 `/visitor` 独立访客端（本地记住会话、轮询人工消息、结束后满意度评价写入 `satisfaction`） |
 
 ## 复跑验证
 

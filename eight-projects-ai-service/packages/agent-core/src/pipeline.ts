@@ -503,16 +503,22 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
   // ───────────────────────── 9. 最终回复 ─────────────────────────
   await stage('reply', async () => {
     const eta: Record<Priority, string> = { P0: '15 分钟内', P1: '2 小时内', P2: '1 个工作日内' };
-    let kind: 'answer' | 'clarify' | 'handoff' = 'answer';
-    let text = reasoningValue.draft;
+    const p = autonomyValue.priority ?? 'P2';
+    // candidate = 推理阶段的候选话术（给坐席审核）；text = 实际对客发送的文本。两者只在自主回复时相同。
+    let candidate = reasoningValue.draft;
+    if (autonomyValue.autoActionsExecuted.length) candidate += `\n\n（已为您创建跟进工单：${autonomyValue.autoActionsExecuted.map((a) => a.split(':')[1]).join('、')}）`;
+    let kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff';
+    let text: string;
     if (autonomyValue.decision === 'escalate') {
       kind = 'handoff';
-      const p = autonomyValue.priority ?? 'P2';
       text = `${reasoningValue.proposedAction.type === 'clarify' ? '' : '您的问题我已经记录并整理好相关信息，'}已为您转接人工客服（优先级 ${p}，预计 ${eta[p]}开始处理）。人工上线后会直接接续本次对话，无需重复描述。`;
-    } else if (reasoningValue.proposedAction.type === 'clarify') {
-      kind = 'clarify';
+    } else if (autonomyValue.decision === 'human_confirm') {
+      kind = 'pending_confirm';
+      text = `您的问题我已经整理好相关信息，正在由人工客服核实后回复您（优先级 ${p}，预计 ${eta[p]}），请稍候。`;
+    } else {
+      kind = reasoningValue.proposedAction.type === 'clarify' ? 'clarify' : 'answer';
+      text = candidate;
     }
-    if (autonomyValue.autoActionsExecuted.length) text += `\n\n（已为您创建跟进工单：${autonomyValue.autoActionsExecuted.map((a) => a.split(':')[1]).join('、')}）`;
     const internalNote = [
       `场景 ${pack.name} / 意图 ${trace.intent}`,
       `根因：${reasoningValue.rootCause}`,
@@ -520,9 +526,11 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       `知识：${knowledge.hits.map((h) => h.docTitle).join('，') || '无'}`,
       `风险 ${riskValue.level}：${riskValue.reasons.join('；')}`,
       `决策：${autonomyValue.decision}${autonomyValue.priority ? ` ${autonomyValue.priority}` : ''}；建议动作 ${reasoningValue.proposedAction.type}${reasoningValue.proposedAction.reason ? `（${reasoningValue.proposedAction.reason}）` : ''}`,
+      ...(kind === 'answer' || kind === 'clarify' ? [] : [`候选话术（待人工确认后发送）：${candidate}`]),
     ].join('\n');
-    trace.reply = { text, internalNote, kind };
-    return { summary: `${kind === 'answer' ? '生成回复' : kind === 'clarify' ? '生成追问' : '生成转人工话术'}，${text.length} 字`, detail: { text, internalNote, kind }, value: null };
+    trace.reply = { text, candidate, internalNote, kind };
+    const kindLabel = { answer: '生成回复', clarify: '生成追问', pending_confirm: '生成等待人工核实提示（候选话术留给坐席）', handoff: '生成转人工话术' }[kind];
+    return { summary: `${kindLabel}，对客 ${text.length} 字${kind === 'answer' || kind === 'clarify' ? '' : `，候选 ${candidate.length} 字`}`, detail: { text, candidate, internalNote, kind }, value: null };
   });
 
   return finish();
@@ -531,7 +539,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     trace.totalDurationMs = Date.now() - started;
     trace.usage = sumUsage(usages);
     if (!trace.reply) {
-      trace.reply = { text: '系统暂时无法处理您的问题，已为您转接人工客服。', internalNote: `执行链失败：${trace.error ?? '未知'}`, kind: 'handoff' };
+      trace.reply = { text: '系统暂时无法处理您的问题，已为您转接人工客服。', candidate: '', internalNote: `执行链失败：${trace.error ?? '未知'}`, kind: 'handoff' };
       trace.autonomy = trace.autonomy ?? { decision: 'escalate', priority: 'P1', reasons: ['执行链失败兜底'], autoActionsExecuted: [], whitelistMatched: false };
     }
     return trace;

@@ -42,3 +42,37 @@ html, body, #root { height: 100%; margin: 0; background: #f5f7fa; }
 .top-nav .tab { color: #cbd5e1; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 14px; }
 .top-nav .tab.active { color: #fff; background: rgba(255,255,255,.12); }
 .badge-risk { font-weight: 600; }
+
+/* ───────── 独立访客端 ───────── */
+.visitor-bg { min-height: 100vh; background: linear-gradient(160deg, #eef3ff 0%, #f7f8fb 50%, #eefbf5 100%); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.visitor-widget { width: 440px; max-width: 100%; height: min(760px, calc(100vh - 40px)); background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(15, 31, 61, .18); display: flex; flex-direction: column; overflow: hidden; }
+.visitor-head { background: linear-gradient(135deg, #1f6feb, #3b82f6); color: #fff; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; }
+.visitor-head .brand { display: flex; align-items: center; gap: 10px; }
+.visitor-head .dot { width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.25); display: inline-block; box-shadow: inset 0 0 0 2px rgba(255,255,255,.6); }
+.visitor-start { padding: 26px 22px; flex: 1; }
+.visitor-start h3 { margin: 0 0 6px; }
+.visitor-start p { color: #6b7280; font-size: 13px; margin: 0 0 16px; }
+.visitor-body { flex: 1; overflow: auto; padding: 14px; background: #f5f7fb; display: flex; flex-direction: column; gap: 12px; }
+.visitor-hint { background: #fff; border-radius: 10px; padding: 10px 12px; font-size: 13px; color: #374151; border: 1px solid #e5e7eb; }
+.vmsg { display: flex; gap: 8px; align-items: flex-end; max-width: 88%; }
+.vmsg.me { align-self: flex-end; flex-direction: row-reverse; }
+.vmsg .avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; font-size: 14px; }
+.vmsg .avatar.bot { background: #1f6feb; }
+.vmsg .avatar.agent { background: #7c3aed; }
+.vmsg .who { font-size: 11px; color: #9ca3af; margin: 0 4px 3px; }
+.vmsg.me .who { text-align: right; }
+.vbubble { padding: 9px 12px; border-radius: 12px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.vbubble.user { background: #1f6feb; color: #fff; border-bottom-right-radius: 4px; }
+.vbubble.bot { background: #fff; border: 1px solid #e5e7eb; border-bottom-left-radius: 4px; }
+.vbubble.agent { background: #f3e8ff; border: 1px solid #e9d5ff; border-bottom-left-radius: 4px; }
+.vbubble.typing { display: inline-flex; gap: 4px; padding: 12px 14px; }
+.vbubble.typing span { width: 6px; height: 6px; border-radius: 50%; background: #93c5fd; animation: vtyping 1.2s infinite; }
+.vbubble.typing span:nth-child(2) { animation-delay: .2s; }
+.vbubble.typing span:nth-child(3) { animation-delay: .4s; }
+@keyframes vtyping { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-4px); opacity: 1; } }
+.visitor-rate { align-self: center; background: #fff; border: 1px dashed #d1d5db; border-radius: 10px; padding: 10px 14px; text-align: center; font-size: 13px; color: #4b5563; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.visitor-input { border-top: 1px solid #eef0f3; padding: 10px 12px 8px; background: #fff; }
+.visitor-input .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; }
+.visitor-input .chips button { flex-shrink: 0; border: 1px solid #dbe4ff; background: #f0f4ff; color: #1f4fb8; border-radius: 14px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.visitor-input .chips button:disabled { opacity: .5; cursor: default; }
+.visitor-foot { margin-top: 8px; font-size: 11px; color: #9ca3af; text-align: center; }

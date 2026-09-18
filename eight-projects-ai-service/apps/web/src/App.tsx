@@ -16,11 +16,14 @@ import Dashboard from './pages/management/Dashboard';
 import Voc from './pages/management/Voc';
 import DigitalEmployees from './pages/employees/DigitalEmployees';
 import PrivateDomain from './pages/PrivateDomain';
+import Visitor from './pages/Visitor';
 
 export default function App() {
   return (
     <Routes>
       <Route path="/management/dashboard" element={<Dashboard />} />
+      <Route path="/visitor" element={<Visitor />} />
+      <Route path="/visitor/:id" element={<Visitor />} />
       <Route element={<AppLayout />}>
         <Route index element={<Overview />} />
         <Route path="/reception/online" element={<OnlineService />} />

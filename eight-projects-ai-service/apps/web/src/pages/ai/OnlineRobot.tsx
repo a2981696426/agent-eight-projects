@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, App, Button, Card, Col, Input, Row, Select, Space, Tag, Typography } from 'antd';
-import { SendOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { ExportOutlined, SendOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import type { Conversation, Customer, Message, Trace } from '@eight/shared';
 import { api, fmtShort } from '../../api';
 import TraceViewer from '../../components/TraceViewer';
@@ -25,6 +25,21 @@ export default function OnlineRobot() {
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
+  // 轮询：坐席在「在线客服」接管并回复后，这里的访客视图也能看到人工消息与状态变化
+  useEffect(() => {
+    if (!conv) return;
+    const t = setInterval(async () => {
+      if (busy) return;
+      try {
+        const d = await api<{ conversation: Conversation; messages: Message[] }>(`/api/conversations/${conv.id}`);
+        setConv(d.conversation);
+        setMessages(d.messages);
+      } catch {
+        /* 轮询失败忽略，下一轮再试 */
+      }
+    }, 4000);
+    return () => clearInterval(t);
+  }, [conv?.id, busy]);
 
   async function ensureConv() {
     if (conv) return conv;
@@ -64,11 +79,12 @@ export default function OnlineRobot() {
       <div className="page-head">
         <div>
           <h2>在线机器人 · 访客体验与执行链透视</h2>
-          <div className="desc">左侧模拟访客端；每条用户消息触发一次完整的九阶段执行链，右侧实时展示每一环的输入、输出与决策依据。</div>
+          <div className="desc">左侧模拟访客端；每条用户消息触发一次完整的九阶段执行链，右侧实时展示每一环的输入、输出与决策依据。人工确认/升级时访客只收到等待或转接提示，候选话术留给坐席（见轨迹底部）。要像真实客户一样持续对话，请用「独立访客端」。</div>
         </div>
         <Space>
           <Select value={channel} onChange={setChannel} options={['web', 'app', 'wechat', 'taobao', 'douyin', 'jd'].map((c) => ({ value: c, label: `渠道：${c}` }))} style={{ width: 140 }} disabled={!!conv} />
           <Select value={customerId} onChange={setCustomerId} style={{ width: 220 }} disabled={!!conv} allowClear placeholder="匿名访客" options={customers.map((c) => ({ value: c.id, label: `${c.name} · ${c.level} · ${c.phone}` }))} />
+          <Button icon={<ExportOutlined />} href={conv ? `/visitor/${conv.id}` : '/visitor'} target="_blank">独立访客端</Button>
           <Button onClick={reset}>新会话</Button>
         </Space>
       </div>
@@ -98,7 +114,7 @@ export default function OnlineRobot() {
                   .filter((m) => m.role !== 'system')
                   .map((m) => (
                     <div key={m.id} className={`bubble ${m.role}`}>
-                      {m.text}
+                      <span className="txt">{m.text}</span>
                       <span className="meta">
                         {{ user: '访客', bot: '机器人', agent: '人工客服', system: '系统' }[m.role]} · {fmtShort(m.at)}
                         {m.meta?.risk ? ` · 风险 ${m.meta.risk}` : ''}

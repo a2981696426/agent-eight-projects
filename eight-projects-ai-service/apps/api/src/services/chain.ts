@@ -162,6 +162,7 @@ export function rowToConversation(r: Record<string, unknown>): Conversation {
     createdAt: String(r.created_at),
     messageCount: count,
     summary: (r.summary as string) ?? null,
+    satisfaction: (r.satisfaction as number) ?? null,
   };
 }
 export function loadMessages(conversationId: string): Message[] {
@@ -230,13 +231,15 @@ export async function runForConversation(conversationId: string, text: string, o
   const decision = trace.autonomy?.decision ?? 'escalate';
   d.run('UPDATE conversations SET scenario=? WHERE id=?', trace.scenario, conversationId);
   if (opts.mode === 'bot') {
-    if (decision === 'auto_reply' && trace.reply) {
-      botMessage = appendMessage(conversationId, 'bot', trace.reply.text, { traceId: trace.id, meta: { kind: trace.reply.kind, risk: trace.risk?.level } });
+    // 单一来源：对客发送的文本永远等于 trace.reply.text（自主回复=候选话术；人工确认/升级=等待或转接提示）
+    const reply = trace.reply!;
+    if (decision === 'auto_reply') {
+      botMessage = appendMessage(conversationId, 'bot', reply.text, { traceId: trace.id, meta: { kind: reply.kind, risk: trace.risk?.level } });
     } else {
       const p = trace.autonomy?.priority ?? 'P2';
       d.run("UPDATE conversations SET controller='human', status='waiting_human', priority=? WHERE id=?", p, conversationId);
-      botMessage = appendMessage(conversationId, 'bot', trace.reply?.kind === 'handoff' ? trace.reply.text : `您的问题需要人工客服进一步核实，已为您转接（优先级 ${p}）。`, { traceId: trace.id, meta: { kind: 'handoff', decision, priority: p } });
-      appendMessage(conversationId, 'system', `【${decision === 'human_confirm' ? '待人工确认' : '升级人工'} ${p}】${trace.reply?.internalNote ?? ''}`, { traceId: trace.id, meta: { internal: true } });
+      botMessage = appendMessage(conversationId, 'bot', reply.text, { traceId: trace.id, meta: { kind: reply.kind, decision, priority: p } });
+      appendMessage(conversationId, 'system', `【${decision === 'human_confirm' ? '待人工确认' : '升级人工'} ${p}】${reply.internalNote}`, { traceId: trace.id, meta: { internal: true, candidate: reply.candidate } });
     }
   }
   if (trace.scenario && ['logistics', 'invoice', 'refund_price_diff'].includes(trace.scenario)) {

@@ -8,7 +8,7 @@
 | | 呼叫中心 | `/reception/call-center` | 暂缓（占位 + 接入依赖说明） |
 | | 视频客服 | `/reception/video` | 暂缓 |
 | | 工单系统 | `/reception/tickets` | 可用 |
-| 智能增强 | 在线机器人 | `/ai/online-robot` 访客端 + 执行链透视 | 可用 |
+| 智能增强 | 在线机器人 | `/ai/online-robot` 访客端 + 执行链透视；`/visitor` 独立访客端（客户视角，记住会话、轮询人工回复、结束评价） | 可用 |
 | | 呼入机器人 | `/ai/inbound-robot` IVR 流程编辑 + 文本模拟来电接入执行链 | 可用（无线路/ASR） |
 | | AI 外呼 | `/ai/outbound` 任务/名单/话术，大模型模拟外呼结果回写 | 可用（模拟） |
 | | AIGC 应用 | `/ai/aigc` 小记、分类、工单抽取、应答建议、润色、FAQ 抽取、相似问 | 可用 |

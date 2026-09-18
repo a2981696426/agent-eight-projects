@@ -102,4 +102,10 @@ test('话术中出现证据里不存在的金额 → L2 人工确认', async () 
   const t = await runChain(base(llm, tools), { text: '订单 20260918000123 慢了' });
   assert.ok(t.risk?.flags.includes('unsupported_amount'));
   assert.equal(t.autonomy?.decision, 'human_confirm');
+  // 人工确认：对客发送的是等待提示，候选话术单独保留给坐席
+  assert.equal(t.reply?.kind, 'pending_confirm');
+  assert.equal(t.reply?.candidate, '可以为您补偿 50 元。');
+  assert.notEqual(t.reply?.text, t.reply?.candidate);
+  assert.match(t.reply?.text ?? '', /人工客服核实/);
+  assert.match(t.reply?.internalNote ?? '', /候选话术/);
 });

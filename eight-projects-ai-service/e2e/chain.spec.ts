@@ -14,6 +14,10 @@ test.describe('核心执行链（真实大模型）', () => {
     await expect(page.locator('.stage.ok')).toHaveCount(9);
     await expect(page.locator('.ant-tag').filter({ hasText: /^场景 logistics$/ })).toBeVisible();
     await expect(page.locator('.bubble.bot').first()).not.toContainText('正在思考');
+    // 访客端气泡必须与轨迹「对客回复（实际发送）」逐字一致；候选话术只在人工确认/升级时另列
+    const sent = (await page.locator('.reply-sent').innerText()).trim();
+    const bubble = (await page.locator('.bubble.bot .txt').last().innerText()).trim();
+    expect(bubble).toBe(sent);
     await page.screenshot({ path: shot('chain-logistics'), fullPage: true });
     w.assertClean('online-robot chain');
   });

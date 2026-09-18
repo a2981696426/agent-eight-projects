@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { App, Badge, Button, Descriptions, Drawer, Empty, Form, Input, Modal, Segmented, Select, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
-import { BulbOutlined, FileTextOutlined, RobotOutlined, SendOutlined, SolutionOutlined, SwapOutlined, TagsOutlined, UserSwitchOutlined } from '@ant-design/icons';
+import { BulbOutlined, EyeOutlined, FileTextOutlined, RobotOutlined, SendOutlined, SolutionOutlined, SwapOutlined, TagsOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import type { Conversation, Customer, Message, Trace } from '@eight/shared';
 import { api, fmtShort, fmtTime, useApi } from '../../api';
 import TraceViewer, { DecisionTag, RiskTag } from '../../components/TraceViewer';
@@ -185,6 +185,7 @@ export default function OnlineService() {
                 )}
                 <Button size="small" icon={<SwapOutlined />} onClick={() => control('handoff')}>转接</Button>
                 {conv.status === 'closed' ? <Button size="small" onClick={() => control('reopen')}>重开</Button> : <Button size="small" danger onClick={() => control('close')}>结束</Button>}
+                <Tooltip title="以访客视角打开本会话（新标签页），可模拟客户继续提问"><Button size="small" icon={<EyeOutlined />} href={`/visitor/${conv.id}`} target="_blank">访客视角</Button></Tooltip>
               </Space>
             )}
           </div>
@@ -192,7 +193,7 @@ export default function OnlineService() {
             <div className="chat">
               {detail?.messages.map((m) => (
                 <div key={m.id} className={`bubble ${m.role}`}>
-                  {m.text}
+                  <span className="txt">{m.text}</span>
                   <span className="meta">
                     {{ user: conv?.customerName ?? '访客', bot: '机器人', agent: conv?.assignee ?? '人工客服', system: '系统' }[m.role]} · {fmtShort(m.at)}
                     {m.traceId && (
@@ -214,10 +215,12 @@ export default function OnlineService() {
                   </Space>
                   <Space size={4}>
                     <Button size="small" type="link" onClick={() => setTraceOpen(assist)}>依据</Button>
-                    <Button size="small" type="primary" onClick={() => setDraft(assist.reply?.text ?? '')}>采用到输入框</Button>
+                    <Button size="small" type="primary" onClick={() => setDraft(assist.reply?.candidate || assist.reply?.text || '')}>采用到输入框</Button>
                   </Space>
                 </div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{assist.reply?.text}</div>
+                {/* 坐席看到的是候选话术（待确认），不是访客端收到的等待提示 */}
+                <div style={{ whiteSpace: 'pre-wrap' }}>{assist.reply?.candidate || assist.reply?.text}</div>
+                {assist.autonomy?.decision !== 'auto_reply' && <div style={{ marginTop: 4, fontSize: 12, color: '#6b7280' }}>该建议未自动发送，需坐席核对后采用。</div>}
               </div>
             )}
             <Input.TextArea value={draft} onChange={(e) => setDraft(e.target.value)} rows={3} placeholder={conv?.controller === 'bot' ? '机器人接待中：以人工回复需先接管；也可用「模拟访客」测试机器人' : '输入回复，Ctrl+Enter 发送'} onKeyDown={(e) => e.ctrlKey && e.key === 'Enter' && send('agent')} />

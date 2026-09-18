@@ -107,6 +107,17 @@ export async function conversationRoutes(app: FastifyInstance) {
     return rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!);
   });
 
+  /** 访客满意度评价（会话结束后） */
+  app.post('/api/conversations/:id/rate', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ score: z.number().int().min(1).max(5) }).parse(req.body);
+    const row = db().get('SELECT * FROM conversations WHERE id=?', id);
+    if (!row) return reply.code(404).send({ error: '会话不存在' });
+    db().run('UPDATE conversations SET satisfaction=? WHERE id=?', body.score, id);
+    appendMessage(id, 'system', `【访客评价】${body.score} 星`, { meta: { internal: true, satisfaction: body.score } });
+    return rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!);
+  });
+
   app.post('/api/conversations/:id/summary', async (req) => {
     const { id } = req.params as { id: string };
     const s = await summarize(id);

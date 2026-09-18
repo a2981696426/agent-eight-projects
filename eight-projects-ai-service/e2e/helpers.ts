@@ -47,4 +47,5 @@ export const ROUTES: { path: string; heading: RegExp }[] = [
   { path: '/management/voc', heading: /客户之声/ },
   { path: '/employees', heading: /数字员工/ },
   { path: '/private-domain', heading: /AI 私域/ },
+  { path: '/visitor', heading: /欢迎咨询欧态|欧态官方客服/ },
 ];
