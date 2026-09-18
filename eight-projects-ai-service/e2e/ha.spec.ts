@@ -1,18 +1,16 @@
-import { test, expect, request as pwRequest } from '@playwright/test';
-import { shot, watchErrors } from './helpers';
-
-const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:8787';
+import { test, expect } from '@playwright/test';
+import { loginApi, shot, watchErrors } from './helpers';
 
 test.describe('模型高可用与降级', () => {
   test.afterEach(async () => {
-    const api = await pwRequest.newContext({ baseURL: API });
+    const api = await loginApi();
     await api.post('/api/llm/simulate', { data: { mode: 'normal' } });
     await api.dispose();
   });
 
   test('全部模型故障 → 访客端仍在 1s 内收到基于证据的受限模式回复并转人工；Studio 显示演练状态；恢复后正常', async ({ page }) => {
     const w = watchErrors(page);
-    const api = await pwRequest.newContext({ baseURL: API });
+    const api = await loginApi();
     const sim = await (await api.post('/api/llm/simulate', { data: { mode: 'all_down' } })).json();
     expect(sim.configured).toBe(false);
 
@@ -47,3 +45,4 @@ test.describe('模型高可用与降级', () => {
     w.assertClean('ha');
   });
 });
+

@@ -1,0 +1,19 @@
+services:
+  ai-service:
+    build: .
+    image: eight-projects-ai-service:latest
+    container_name: eight-ai-service
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env            # LLM_API_KEY / LLM_BASE_URL / LLM_FALLBACK_* / SESSION_SECRET
+    environment:
+      SERVE_WEB: "1"
+      DATA_DIR: /data
+      API_PORT: "8787"
+    volumes:
+      - ai-service-data:/data
+    restart: unless-stopped
+
+volumes:
+  ai-service-data:

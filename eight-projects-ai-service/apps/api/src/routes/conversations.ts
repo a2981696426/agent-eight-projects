@@ -128,7 +128,9 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.post('/api/conversations/:id/control', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = z.object({ action: z.enum(['takeover', 'robot', 'close', 'reopen', 'handoff']), actor: z.string().default('坐席'), reason: z.string().max(300).default('') }).parse(req.body);
+    const parsed = z.object({ action: z.enum(['takeover', 'robot', 'close', 'reopen', 'handoff']), actor: z.string().default('坐席'), reason: z.string().max(300).default('') }).parse(req.body);
+    // 登录用户优先作为操作者，避免前端伪造
+    const body = { ...parsed, actor: req.user?.name ?? parsed.actor };
     const row = db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
     const patch: Record<string, unknown> = {};
@@ -141,6 +143,16 @@ export async function conversationRoutes(app: FastifyInstance) {
     db().run(`UPDATE conversations SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, ...(keys.map((k) => patch[k]) as (string | null)[]), id);
     appendMessage(id, 'system', `【${{ takeover: '人工接管', robot: '转回机器人', close: '会话结束', reopen: '重新打开', handoff: '转人工排队' }[body.action]}】${body.actor}${body.reason ? `：${body.reason}` : ''}`, { meta: { internal: true } });
     audit(body.actor, `conversation.${body.action}`, id, body);
+    // 后处理闭环（借鉴云商坐席辅助第三环）：会话结束后自动生成小记与待办，不阻塞响应
+    if (body.action === 'close' && loadMessages(id).filter((m) => m.role !== 'system').length >= 2) {
+      summarize(id)
+        .then((s) => {
+          const text = `问题：${s.problem}\n处理：${s.handling}\n结果：${s.outcome}${s.followUp ? `\n跟进：${s.followUp}` : ''}`;
+          db().run('UPDATE conversations SET summary=? WHERE id=?', text, id);
+          appendMessage(id, 'system', `【自动小记】${text}${s.tags.length ? `\n标签：${s.tags.join('、')}` : ''}`, { meta: { internal: true, autoSummary: true } });
+        })
+        .catch((e) => app.log.warn(`自动小记失败 ${id}: ${(e as Error).message}`));
+    }
     return rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!);
   });
 
@@ -167,7 +179,8 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.post('/api/conversations/:id/ticket', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = z.object({ title: z.string().min(1).max(120), type: z.string().default('其他'), priority: z.enum(['P0', 'P1', 'P2']).default('P2'), description: z.string().max(2000).default(''), assignee: z.string().nullable().default(null), actor: z.string().default('坐席') }).parse(req.body);
+    const parsedTicket = z.object({ title: z.string().min(1).max(120), type: z.string().default('其他'), priority: z.enum(['P0', 'P1', 'P2']).default('P2'), description: z.string().max(2000).default(''), assignee: z.string().nullable().default(null), actor: z.string().default('坐席') }).parse(req.body);
+    const body = { ...parsedTicket, actor: req.user?.name ?? parsedTicket.actor };
     const row = db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
     const cust = db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', String(row.customer_id));

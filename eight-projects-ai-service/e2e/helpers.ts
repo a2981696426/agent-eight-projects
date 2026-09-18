@@ -1,4 +1,14 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, request as pwRequest, type APIRequestContext, type Page } from '@playwright/test';
+
+export const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:8787';
+
+/** 以指定账号登录后的 API 请求上下文（Cookie 会话） */
+export async function loginApi(username = 'admin', password = 'admin123'): Promise<APIRequestContext> {
+  const ctx = await pwRequest.newContext({ baseURL: API });
+  const r = await ctx.post('/api/auth/login', { data: { username, password } });
+  expect(r.ok(), `登录 ${username} 失败`).toBeTruthy();
+  return ctx;
+}
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,4 +58,5 @@ export const ROUTES: { path: string; heading: RegExp }[] = [
   { path: '/employees', heading: /数字员工/ },
   { path: '/private-domain', heading: /AI 私域/ },
   { path: '/visitor', heading: /欢迎咨询欧态|欧态官方客服/ },
+  { path: '/login', heading: /登录|系统总览/ }, // 已登录态会被重定向回总览
 ];

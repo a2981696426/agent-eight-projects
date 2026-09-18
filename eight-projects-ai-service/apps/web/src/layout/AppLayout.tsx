@@ -1,7 +1,9 @@
-import { Layout, Menu, Tag, Tooltip } from 'antd';
+import { Dropdown, Layout, Menu, Tag, Tooltip } from 'antd';
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
+  LogoutOutlined,
+  UserOutlined,
   AudioOutlined,
   BarChartOutlined,
   BulbOutlined,
@@ -20,8 +22,9 @@ import {
   TeamOutlined,
   VideoCameraOutlined,
 } from '@ant-design/icons';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useApi } from '../api';
+import { useAuth } from '../auth';
 
 const { Header, Sider, Content } = Layout;
 
@@ -63,6 +66,8 @@ export const NAV: { group: string; items: { key: string; label: string; icon: Re
 
 export default function AppLayout() {
   const loc = useLocation();
+  const nav = useNavigate();
+  const { user, roles, logout } = useAuth();
   const { data: health } = useApi<{ llm: { configured: boolean; modelFast: string }; knowledgeIndexed: number }>('/api/health', { pollMs: 30_000 });
   const items: MenuProps['items'] = [
     { key: '/', icon: <DashboardOutlined />, label: <Link to="/">总览</Link> },
@@ -111,7 +116,20 @@ export default function AppLayout() {
           <Tag icon={<MessageOutlined />} color="blue">
             知识块 {health?.knowledgeIndexed ?? '—'}
           </Tag>
-          <span>管理员 · 欧态旗舰店</span>
+          <Dropdown
+            menu={{
+              items: [
+                { key: 'role', label: `角色：${user ? roles[user.role] : '—'}`, disabled: true },
+                { key: 'visitor', label: <a href="/visitor" target="_blank" rel="noreferrer">打开独立访客端</a> },
+                { type: 'divider' },
+                { key: 'logout', label: '退出登录', icon: <LogoutOutlined />, onClick: () => logout().then(() => nav('/login')) },
+              ],
+            }}
+          >
+            <span style={{ cursor: 'pointer', color: '#fff' }}>
+              <UserOutlined /> {user?.name ?? '未登录'} · 欧态旗舰店
+            </span>
+          </Dropdown>
         </div>
       </Header>
       <Layout>

@@ -1,7 +1,5 @@
-import { test, expect, request as pwRequest } from '@playwright/test';
-import { shot, watchErrors } from './helpers';
-
-const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:8787';
+import { test, expect } from '@playwright/test';
+import { loginApi, shot, watchErrors } from './helpers';
 
 test.describe('独立访客端', () => {
   test('开始咨询 → 机器人回复 → 坐席接管并回复可见 → 结束后评价；刷新后历史保留', async ({ page }) => {
@@ -26,7 +24,7 @@ test.describe('独立访客端', () => {
     expect(second).toMatch(/人工客服|转接/);
 
     // 坐席在工作台接管并回复（通过 API 模拟坐席端），访客端轮询后应看到人工消息
-    const api = await pwRequest.newContext({ baseURL: API });
+    const api = await loginApi('agent', 'agent123');
     await api.post(`/api/conversations/${conversationId}/control`, { data: { action: 'takeover', actor: '客服小欧' } });
     await api.post(`/api/conversations/${conversationId}/messages`, { data: { role: 'agent', text: '您好，我是人工客服小欧，已核实您的订单符合保价条件，稍后为您登记退差价。' } });
     await expect(page.locator('.vbubble.agent .txt').first()).toContainText('人工客服小欧', { timeout: 15_000 });
@@ -49,3 +47,4 @@ test.describe('独立访客端', () => {
     w.assertClean('visitor');
   });
 });
+

@@ -14,6 +14,18 @@
 | 8 | 自主处理 / 人工确认 / 升级 | 用户要求人工 → 升级；L3 → 升级（safety/legal 为 P0，否则 P1）；机器人连续轮次超阈值 → 升级；模型提案 handoff → 升级；白名单场景 且 风险 ≤ min(Agent 上限, 场景包上限) 且 动作在场景包允许列表 → 自主回复（允许时执行 `create_ticket`）；否则人工确认（VIP/紧急 P1，其余 P2） | `autonomy` 阶段 | 否 |
 | 9 | 最终回复 | 产出两份文本：`reply.text` = **实际对客发送**（自主回复 = 候选话术并附自动执行结果；人工确认 = 带优先级/时窗的等待核实提示；升级 = 转接话术），`reply.candidate` = 推理阶段的候选话术，供坐席审核采用；同时生成内部备注（人工确认/升级时含候选话术） | `reply` 阶段 | 否 |
 
+## 速度与高可用（2026-09-18 L8）
+
+- **并行**：第 4 阶段证据获取与第 5 阶段知识检索互不依赖，`Promise.all` 并发；工具之间也并发。
+- **省调用**：必填槽位缺失时不调用推理模型，直接用场景包模板追问（5.4s → 1.1s）；寒暄/致谢零调用；检索改写在缺槽位时跳过。
+- **提示精简**：证据 JSON 截 700 字、知识段 420 字、对话窗口 6 条，`max_tokens` 2000。
+- **模型路由 `LlmRouter`**（`packages/agent-core/src/llm.ts`）：主/备 provider；超时/网络/429/5xx 在同一 provider 指数退避重试，用尽后切换；连续失败达阈值熔断，冷却后半开试探；401 直接切换；400/schema 错误不切换。每次调用的 `usage.provider / attempts / failedOver` 写入 trace。
+- **规则降级**：所有 provider 不可用（或意图/推理调用最终失败）时，意图用关键词规则、话术用「证据模板」只陈述工具事实与相关规则，`trace.degraded=true`，风险 +L2、不允许自主回复、提案 handoff → 升级人工。全程 0 模型调用、毫秒级返回，服务不中断。
+- **进度流式**：`POST /api/conversations/:id/messages/stream` 以 SSE 推送 `stage / done / error`，访客端与在线机器人页逐阶段显示。
+- **故障演练**：`POST /api/llm/simulate {mode: normal|primary_down|all_down}`（管理员），Agent Studio「模型与高可用」可视化 provider 熔断状态、切换事件与降级统计。
+
+Benchmark（同一 10 例）：平均耗时 8825ms → 5399ms，决策准确率 0.8 → 0.9，模型调用 23 → 19。
+
 ## 与业务系统的关系
 
 - **场景包 = 数字员工**（`packages/agent-core/src/scenarios.ts`）：`logistics` 物流智能体、`invoice` 发票智能体、`refund_price_diff` 退款/差价智能体、`presale` 售前、`complaint` 投诉（自治上限 L0）、`general` 通用。新增一个售后能力 = 新增一个场景包 + 需要的工具。

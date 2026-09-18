@@ -13,12 +13,15 @@
 | L6 | 全量回归 + 生产构建 + 文档 | 31 条 e2e 全绿（含 8 条真实模型流），`pnpm build` 通过 | 根脚本 `pnpm -r --filter ./packages/**` 在 pnpm 11 语义变化 → 改为 `pnpm -r run build`；bundle 2.6MB → manualChunks 拆分 antd/echarts/react |
 | L7 | 回复语义修正 + 独立访客端 | 新增 `visitor.spec`（开始咨询 → 规则应答 → 人工确认等待提示 → 坐席接管回复轮询可见 → 刷新历史保留 → 结束评价），`chain.spec` 新增「气泡 === 轨迹对客回复」断言；33 条全绿 | 用户反馈：人工确认时访客气泡与轨迹「最终回复」不一致 → `reply.text` 改为实际对客文本、新增 `reply.candidate` 保存候选话术，`chain.ts` 改为单一来源，TraceViewer 分列展示；坐席回复后「在线机器人」页看不到 → 该页改为轮询，并新增 `/visitor` 独立访客端（本地记住会话、轮询人工消息、结束后满意度评价写入 `satisfaction`） |
 
+| L8 | Firecrawl/Context7 调研 + 执行链提速 + 模型高可用 + SSE | Benchmark 同一 10 例前后对比；单测新增 5 条（重试/熔断/切换/降级/跳过推理）；e2e 新增 `ha.spec`（全部模型故障 → 访客端 <8s 收到受限模式回复并转人工 → Studio 显示演练 → 恢复）；`chain.spec` 断言流式进度芯片 | **Benchmark**：场景准确率 100%→100%，决策准确率 80%→90%，平均耗时 **8825ms→5399ms（−39%）**，模型调用 23→19，tokens 36.5k→27.1k（−26%）；缺槽位追问 5.4s→1.1s。发现问题：pnpm 根目录无 tsx 导致 `node --import tsx` 失败 → 生产启动改在 `apps/api` 目录执行 |
+| L9 | 发布形态：登录 + 三角色权限、API 托管前端、Dockerfile/compose、会话结束自动小记 | `auth.spec`（未登录跳转/坐席只读/退出拦截；API 401/403/200 与审计）；Playwright 改为 setup 项目登录并复用 storageState；本地以 `SERVE_WEB=1` 启动核对 `/`、SPA 回退、静态资源、API 鉴权 | 已登录态访问 `/login` 被重定向使页面用例误判 → 断言放宽；38 条 e2e 全绿 |
+
 ## 复跑验证
 
 ```bash
 pnpm install
 cp .env.example .env   # 填 LLM_API_KEY
 pnpm dev               # 终端 1：api 8787 + web 5173
-pnpm test              # agent-core 单测（不联网）
-pnpm e2e               # 终端 2：31 条 Playwright，含真实模型调用，约 3 分钟
+pnpm test              # agent-core 单测 12 条（不联网，含路由器重试/熔断/降级）
+pnpm e2e               # 终端 2：38 条 Playwright（先自动登录 admin），含真实模型调用与故障演练，约 3.5 分钟
 ```

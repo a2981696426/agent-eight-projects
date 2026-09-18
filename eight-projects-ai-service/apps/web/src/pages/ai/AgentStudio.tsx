@@ -4,6 +4,7 @@ import { ExperimentOutlined, RocketOutlined, SaveOutlined, UndoOutlined } from '
 import type { AgentConfig, ScenarioPack, Trace } from '@eight/shared';
 import { api, fmtTime, pct, useApi } from '../../api';
 import TraceViewer, { DecisionTag, RiskTag } from '../../components/TraceViewer';
+import { useAuth } from '../../auth';
 
 interface Meta {
   scenarios: ScenarioPack[];
@@ -31,6 +32,8 @@ const AGENT_ID = 'agent-cs-main';
 
 export default function AgentStudio() {
   const { message } = App.useApp();
+  const { can } = useAuth();
+  const isAdmin = can(['admin']);
   const { data: meta } = useApi<Meta>('/api/agents/meta');
   const { data: agentData, reload } = useApi<{ agent: AgentConfig; versions: { version: number; published_at: string; note: string }[] }>(`/api/agents/${AGENT_ID}`);
   const [form] = Form.useForm();
@@ -134,8 +137,14 @@ export default function AgentStudio() {
         {agent && (
           <Space>
             <Tag color={agent.status === 'published' ? 'green' : 'orange'}>{agent.status === 'published' ? `已发布 v${agent.version}` : `草稿（基于 v${agent.version}）`}</Tag>
-            <Button icon={<SaveOutlined />} loading={busy === 'save'} onClick={saveDraft}>保存草稿</Button>
-            <Button type="primary" icon={<RocketOutlined />} loading={busy === 'publish'} onClick={publish}>发布新版本</Button>
+            {isAdmin ? (
+              <>
+                <Button icon={<SaveOutlined />} loading={busy === 'save'} onClick={saveDraft}>保存草稿</Button>
+                <Button type="primary" icon={<RocketOutlined />} loading={busy === 'publish'} onClick={publish}>发布新版本</Button>
+              </>
+            ) : (
+              <Tag>只读：配置发布需管理员</Tag>
+            )}
           </Space>
         )}
       </div>
@@ -268,12 +277,14 @@ export default function AgentStudio() {
                       { title: '平均耗时', width: 90, render: (_v, r) => `${r.stats.avgMs} ms` },
                       { title: '最近错误', dataIndex: ['stats', 'lastError'], ellipsis: true, render: (v) => v ?? '—' },
                     ]} />
-                    <Space style={{ marginTop: 10 }} wrap>
-                      <span>故障演练：</span>
-                      <Button size="small" onClick={() => simulate('primary_down')}>模拟主模型故障</Button>
-                      <Button size="small" danger onClick={() => simulate('all_down')}>模拟全部模型故障</Button>
-                      <Button size="small" type="primary" onClick={() => simulate('normal')}>恢复正常</Button>
-                    </Space>
+                    {isAdmin && (
+                      <Space style={{ marginTop: 10 }} wrap>
+                        <span>故障演练：</span>
+                        <Button size="small" onClick={() => simulate('primary_down')}>模拟主模型故障</Button>
+                        <Button size="small" danger onClick={() => simulate('all_down')}>模拟全部模型故障</Button>
+                        <Button size="small" type="primary" onClick={() => simulate('normal')}>恢复正常</Button>
+                      </Space>
+                    )}
                     <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
                       策略：可重试错误（超时/网络/429/5xx）在同一 provider 指数退避重试 → 用尽后切换下一个 provider；连续失败达阈值即熔断并冷却后半开试探；401 直接切换；全部不可用时执行链进入<b>规则降级</b>（关键词识别场景、只陈述工具事实、强制人工确认），不让服务中断。备用 provider 通过 <code>LLM_FALLBACK_*</code> 配置。
                     </Typography.Paragraph>
@@ -300,7 +311,7 @@ export default function AgentStudio() {
                 { title: '版本', dataIndex: 'version', width: 80, render: (v) => <Tag color={v === agent?.version ? 'green' : 'default'}>v{v}{v === agent?.version ? ' 当前' : ''}</Tag> },
                 { title: '发布时间', dataIndex: 'published_at', width: 180, render: fmtTime },
                 { title: '说明', dataIndex: 'note' },
-                { title: '', width: 120, render: (_v, r) => r.version !== agent?.version && <Button size="small" icon={<UndoOutlined />} onClick={() => rollback(r.version)}>回滚到此版</Button> },
+                { title: '', width: 120, render: (_v, r) => isAdmin && r.version !== agent?.version && <Button size="small" icon={<UndoOutlined />} onClick={() => rollback(r.version)}>回滚到此版</Button> },
               ]} />
             ),
           },

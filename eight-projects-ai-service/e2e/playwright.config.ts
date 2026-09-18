@@ -21,4 +21,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
+  projects: [
+    // 先以管理员登录并保存会话，其余用例复用（访客端/登录用例自行控制登录态）
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    { name: 'chromium', dependencies: ['setup'], use: { storageState: 'e2e/.auth/admin.json' }, testIgnore: /auth\.setup\.ts/ },
+  ],
 });

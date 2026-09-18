@@ -47,6 +47,13 @@
 ┌ packages/shared ─── 前后端共享类型（Trace/Conversation/Ticket/Agent…）──┘
 ```
 
+## 发布形态与安全（L9）
+
+- **登录与角色**：`services/auth.ts`，scrypt 密码哈希 + 服务端会话 + 签名 httpOnly Cookie；三角色 admin / agent / analyst；`onRequest` 钩子统一鉴权，公开接口只有健康检查、登录与访客端最小集合；越权写操作 403 并写审计。前端 `RequireAuth` 路由守卫 + 角色隐藏发布/演练按钮。演示账号见登录页。
+- **单端口生产模式**：`SERVE_WEB=1` 时 API 用 `@fastify/static` 托管 `apps/web/dist`，非 `/api` GET 回退 `index.html`。
+- **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 挂载 `/data` 卷、读取 `.env`。
+- **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
+
 ## 关键设计决策
 
 1. **规则先行、模型分层**：寒暄不调模型；分类/抽取用关闭思考的快模式（~1s）；只有根因推理用思考模式。单次完整链路典型 8~14s、2 次模型调用、3~5k tokens。
