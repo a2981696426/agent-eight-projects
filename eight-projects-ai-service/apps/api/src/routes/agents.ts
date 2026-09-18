@@ -1,0 +1,101 @@
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { SCENARIO_PACKS } from '@eight/agent-core';
+import type { AgentConfig } from '@eight/shared';
+import { J, nowIso, openDb, uid } from '../db.ts';
+import { loadAgent, runStandalone, tools } from '../services/chain.ts';
+import { DEFAULT_AGENT } from '../seed.ts';
+
+const db = () => openDb();
+const RiskLevel = z.enum(['L0', 'L1', 'L2', 'L3']);
+const AgentBody = z.object({
+  name: z.string().min(1).max(60),
+  description: z.string().max(500).default(''),
+  models: z.object({ fast: z.string(), reasoning: z.string(), reasoningEffort: z.enum(['low', 'medium', 'high']) }),
+  persona: z.string().max(2000),
+  scenarios: z.array(z.string()).min(1),
+  whitelistScenarios: z.array(z.string()),
+  maxAutoRisk: RiskLevel,
+  retrieval: z.object({ topK: z.number().int().min(1).max(20), minScore: z.number().min(0).max(1), rewriteOnMiss: z.boolean() }),
+  handoffRules: z.object({ keywords: z.array(z.string()), maxBotTurns: z.number().int().min(1).max(50) }),
+  tools: z.array(z.string()),
+});
+
+export async function agentRoutes(app: FastifyInstance) {
+  app.get('/api/agents', async () => db().all('SELECT id, name, version, status, updated_at FROM agents ORDER BY updated_at DESC'));
+  app.get('/api/agents/meta', async () => ({ scenarios: SCENARIO_PACKS, tools: tools.list(), models: [{ id: 'deepseek-flash', label: 'DeepSeek Flash（快/推理双模式）' }, { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }] }));
+  app.get('/api/agents/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = db().get<{ doc: string }>('SELECT doc FROM agents WHERE id=?', id);
+    if (!row) return reply.code(404).send({ error: 'Agent 不存在' });
+    const versions = db().all('SELECT version, published_at, note FROM agent_versions WHERE agent_id=? ORDER BY version DESC', id);
+    return { agent: J.parse<AgentConfig>(row.doc, DEFAULT_AGENT), versions };
+  });
+  /** 保存草稿：不改版本号，状态变为 draft */
+  app.put('/api/agents/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const cur = loadAgent(id);
+    if (!db().get('SELECT id FROM agents WHERE id=?', id)) return reply.code(404).send({ error: 'Agent 不存在' });
+    const b = AgentBody.parse(req.body);
+    const next: AgentConfig = { ...cur, ...b, id, status: 'draft', updatedAt: nowIso() };
+    db().run('UPDATE agents SET name=?, status=?, doc=?, updated_at=? WHERE id=?', next.name, 'draft', J.str(next), next.updatedAt, id);
+    return next;
+  });
+  app.post('/api/agents/:id/publish', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ note: z.string().max(200).default('') }).parse(req.body ?? {});
+    const cur = loadAgent(id);
+    if (!db().get('SELECT id FROM agents WHERE id=?', id)) return reply.code(404).send({ error: 'Agent 不存在' });
+    const next: AgentConfig = { ...cur, version: cur.version + 1, status: 'published', updatedAt: nowIso() };
+    db().run('UPDATE agents SET version=?, status=?, doc=?, updated_at=? WHERE id=?', next.version, 'published', J.str(next), next.updatedAt, id);
+    db().run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), id, next.version, J.str(next), next.updatedAt, b.note || `发布 v${next.version}`);
+    db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), 'admin', 'agent.publish', id, J.str({ version: next.version, note: b.note }));
+    return next;
+  });
+  app.post('/api/agents/:id/rollback', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ version: z.number().int().min(1) }).parse(req.body);
+    const v = db().get<{ doc: string }>('SELECT doc FROM agent_versions WHERE agent_id=? AND version=?', id, b.version);
+    if (!v) return reply.code(404).send({ error: '版本不存在' });
+    const cur = loadAgent(id);
+    const restored = J.parse<AgentConfig>(v.doc, cur);
+    const next: AgentConfig = { ...restored, version: cur.version + 1, status: 'published', updatedAt: nowIso() };
+    db().run('UPDATE agents SET version=?, status=?, doc=?, updated_at=? WHERE id=?', next.version, 'published', J.str(next), next.updatedAt, id);
+    db().run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), id, next.version, J.str(next), next.updatedAt, `回滚到 v${b.version}`);
+    return next;
+  });
+  /** 测试台：用当前（草稿）配置试跑一条输入 */
+  app.post('/api/agents/:id/test', async (req) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ text: z.string().min(1).max(2000), customerId: z.string().nullable().default(null), channel: z.string().default('web') }).parse(req.body);
+    return runStandalone(b.text, { agent: loadAgent(id), customerId: b.customerId, channel: b.channel });
+  });
+  /** Benchmark：对内置评测集逐条试跑，比对场景与决策 */
+  app.get('/api/agents/:id/benchmarks', async (req) => {
+    const { id } = req.params as { id: string };
+    return { cases: db().all('SELECT * FROM benchmark_cases'), runs: db().all<{ id: string; agent_version: number; created_at: string; doc: string }>('SELECT * FROM benchmark_runs WHERE agent_id=? ORDER BY created_at DESC LIMIT 10', id).map((r) => ({ id: r.id, agentVersion: r.agent_version, createdAt: r.created_at, ...J.parse<Record<string, unknown>>(r.doc, {}) })) };
+  });
+  app.post('/api/agents/:id/benchmarks', async (req) => {
+    const { id } = req.params as { id: string };
+    const b = z.object({ limit: z.number().int().min(1).max(50).default(10) }).parse(req.body ?? {});
+    const agent = loadAgent(id);
+    const cases = db().all<{ id: string; text: string; expected_scenario: string; expected_decision: string; note: string; customer_id: string | null }>('SELECT * FROM benchmark_cases LIMIT ?', b.limit);
+    const rows: Record<string, unknown>[] = [];
+    let scenarioOk = 0;
+    let decisionOk = 0;
+    let usage = { promptTokens: 0, completionTokens: 0, calls: 0 };
+    for (const c of cases) {
+      const t = await runStandalone(c.text, { agent, customerId: c.customer_id });
+      const sOk = t.scenario === c.expected_scenario;
+      const dOk = t.autonomy?.decision === c.expected_decision;
+      scenarioOk += sOk ? 1 : 0;
+      decisionOk += dOk ? 1 : 0;
+      usage = { promptTokens: usage.promptTokens + t.usage.promptTokens, completionTokens: usage.completionTokens + t.usage.completionTokens, calls: usage.calls + t.usage.calls };
+      rows.push({ caseId: c.id, text: c.text, expectedScenario: c.expected_scenario, actualScenario: t.scenario, scenarioOk: sOk, expectedDecision: c.expected_decision, actualDecision: t.autonomy?.decision, decisionOk: dOk, risk: t.risk?.level, traceId: t.id, durationMs: t.totalDurationMs, replyKind: t.reply?.kind, note: c.note });
+    }
+    const doc = { total: cases.length, scenarioAccuracy: cases.length ? scenarioOk / cases.length : 0, decisionAccuracy: cases.length ? decisionOk / cases.length : 0, usage, rows };
+    const runId = uid('br-');
+    db().run('INSERT INTO benchmark_runs VALUES (?,?,?,?,?)', runId, id, agent.version, nowIso(), J.str(doc));
+    return { id: runId, agentVersion: agent.version, createdAt: nowIso(), ...doc };
+  });
+}

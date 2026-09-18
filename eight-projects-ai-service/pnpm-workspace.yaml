@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11：允许执行构建脚本的依赖（esbuild 需要校验本地二进制）
+allowBuilds:
+  esbuild: true
