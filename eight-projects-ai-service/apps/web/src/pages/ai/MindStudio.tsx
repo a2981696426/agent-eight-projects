@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { App, Button, Card, Col, Drawer, Form, Input, Modal, Row, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
-import { CheckOutlined, DeleteOutlined, ImportOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { App, Button, Card, Col, Drawer, Form, Input, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd';
+import { CheckOutlined, DeleteOutlined, ImportOutlined, PlusOutlined, SearchOutlined, UploadOutlined } from '@ant-design/icons';
 import type { KnowledgeDoc, KnowledgeHit } from '@eight/shared';
 import { api, fmtTime, useApi } from '../../api';
 
@@ -14,13 +14,14 @@ interface DocDetail {
 export default function MindStudio() {
   const { message, modal } = App.useApp();
   const { data: docs, reload } = useApi<KnowledgeDoc[]>('/api/knowledge/docs');
-  const { data: stats, reload: reloadStats } = useApi<{ docs: number; published: number; chunks: number; indexed: number; categories: { category: string; n: number }[] }>('/api/knowledge/stats');
+  const { data: stats, reload: reloadStats } = useApi<{ docs: number; published: number; chunks: number; indexed: number; vectors: { enabled: boolean; provider: string | null; model: string | null; count: number; coverage: number; mode?: string }; categories: { category: string; n: number }[] }>('/api/knowledge/stats', { pollMs: 8000 });
   const [detail, setDetail] = useState<DocDetail | null>(null);
   const [editing, setEditing] = useState<Partial<KnowledgeDoc> | null>(null);
   const [form] = Form.useForm();
   const [q, setQ] = useState('这个传感器防水吗');
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
   const [importText, setImportText] = useState('');
+  const [importFormat, setImportFormat] = useState<'text' | 'faq-csv' | 'faq-json'>('text');
   const [importPublish, setImportPublish] = useState(false);
   const [faqSource, setFaqSource] = useState('');
   const [faqs, setFaqs] = useState<{ question: string; answer: string; tags: string[] }[] | null>(null);
@@ -57,7 +58,7 @@ export default function MindStudio() {
   async function doImport() {
     setBusy('import');
     try {
-      const r = await api<{ created: number }>('/api/knowledge/import', { method: 'POST', body: { text: importText, publish: importPublish, category: '导入' } });
+      const r = await api<{ created: number }>('/api/knowledge/import', { method: 'POST', body: { text: importText, format: importFormat, publish: importPublish, category: importFormat === 'text' ? '导入' : 'FAQ' } });
       message.success(`已导入 ${r.created} 篇`);
       setImportText('');
       await refresh();
@@ -98,8 +99,15 @@ export default function MindStudio() {
         </Space>
       </div>
       <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-        {[['资料总数', stats?.docs], ['已发布', stats?.published], ['知识块', stats?.chunks], ['已入索引', stats?.indexed]].map(([l, v]) => (
-          <Col key={String(l)} xs={12} md={6}><div className="kpi"><div className="label">{l}</div><div className="value">{v ?? '—'}</div></div></Col>
+        {[
+          ['资料总数', stats?.docs],
+          ['已发布', stats?.published],
+          ['知识块', stats?.chunks],
+          ['已入索引', stats?.indexed],
+          ['向量覆盖', stats?.vectors ? (stats.vectors.enabled ? `${Math.round((stats.vectors.coverage ?? 0) * 100)}% · ${stats.vectors.provider}` : '未启用') : '—'],
+          ['检索模式', stats?.vectors?.mode === 'hybrid' ? 'BM25 + 向量' : 'BM25'],
+        ].map(([l, v]) => (
+          <Col key={String(l)} xs={12} md={4}><div className="kpi"><div className="label">{l}</div><div className="value" style={{ fontSize: String(l).includes('向量') || String(l).includes('模式') ? 16 : undefined }}>{v ?? '—'}</div></div></Col>
         ))}
       </Row>
       <Tabs
@@ -150,7 +158,11 @@ export default function MindStudio() {
                 <Typography.Paragraph type="secondary" style={{ marginTop: 8, fontSize: 12 }}>混合词法检索（中文二元组 + BM25，命中率归一化 0~1）。执行链在弱命中（低于 Agent 配置的 minScore）时会让快模型结合上下文改写查询后重检。</Typography.Paragraph>
                 {hits?.map((h) => (
                   <div key={h.id} style={{ padding: '8px 10px', border: '1px solid #f0f0f0', borderRadius: 6, marginBottom: 8 }}>
-                    <Space><Tag color={h.score >= 0.22 ? 'green' : 'orange'}>{h.score.toFixed(2)}</Tag><b>{h.docTitle}</b><span className="mono" style={{ color: '#9ca3af' }}>{h.id}</span>{h.tags.map((t) => <Tag key={t}>{t}</Tag>)}</Space>
+                    <Space wrap>
+                      <Tag color={h.score >= 0.22 ? 'green' : 'orange'}>{h.score.toFixed(2)}</Tag>
+                      {(h.lexical != null || h.semantic != null) && <Tag style={{ color: '#6b7280' }}>词法 {(h.lexical ?? 0).toFixed(2)} · 语义 {(h.semantic ?? 0).toFixed(2)}</Tag>}
+                      <b>{h.docTitle}</b><span className="mono" style={{ color: '#9ca3af' }}>{h.id}</span>{h.tags.map((t) => <Tag key={t}>{t}</Tag>)}
+                    </Space>
                     <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', marginTop: 4 }}>{h.text}</div>
                   </div>
                 ))}
@@ -163,8 +175,19 @@ export default function MindStudio() {
             label: '批量导入',
             children: (
               <Card size="small">
-                <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>粘贴多篇资料，用一行 <code>---</code> 或 <code># 标题</code> 分隔；每篇首行作为标题。可选导入后直接发布。</Typography.Paragraph>
-                <Input.TextArea rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={'# 加固贴使用说明\n加固贴用于……\n\n---\n\n# 传感器更换周期\n每 14 天……'} />
+                <Space wrap style={{ marginBottom: 8 }}>
+                  <Segmented value={importFormat} onChange={(v) => setImportFormat(v as typeof importFormat)} options={[{ label: '多篇文本', value: 'text' }, { label: 'FAQ CSV（云商导出）', value: 'faq-csv' }, { label: 'FAQ JSON', value: 'faq-json' }]} />
+                  <Upload accept=".csv,.txt,.md,.json" showUploadList={false} beforeUpload={(file) => { file.text().then((t) => { setImportText(t); if (file.name.endsWith('.csv')) setImportFormat('faq-csv'); else if (file.name.endsWith('.json')) setImportFormat('faq-json'); }); return false; }}>
+                    <Button icon={<UploadOutlined />}>选择文件</Button>
+                  </Upload>
+                </Space>
+                <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+                  {importFormat === 'text' && <>粘贴多篇资料，用一行 <code>---</code> 或 <code># 标题</code> 分隔；每篇首行作为标题。</>}
+                  {importFormat === 'faq-csv' && <>云商后台导出知识库 → Excel 另存为「CSV UTF-8」→ 上传。表头自动识别：<code>标准问 / 答案 / 相似问 / 分类 / 标签</code>（或 question / answer / similar / category / tags）；相似问用 <code>|</code> 或 <code>；</code> 分隔，会写入正文提升召回。</>}
+                  {importFormat === 'faq-json' && <>JSON 数组或 <code>{'{ items: [...] }'}</code>，字段同 CSV。</>}
+                  {' '}发布后自动向量化（向量覆盖见上方指标）。
+                </Typography.Paragraph>
+                <Input.TextArea rows={10} value={importText} onChange={(e) => setImportText(e.target.value)} placeholder={importFormat === 'text' ? '# 加固贴使用说明\n加固贴用于……\n\n---\n\n# 传感器更换周期\n每 14 天……' : importFormat === 'faq-csv' ? '标准问,答案,相似问,分类,标签\n传感器防水吗？,M8 防水等级 IPX8……,洗澡能戴吗|游泳可以戴吗,产品,售前 防水' : '[{ "question": "…", "answer": "…", "similar": ["…"], "tags": ["…"] }]'} />
                 <Space style={{ marginTop: 8 }}>
                   <Switch checked={importPublish} onChange={setImportPublish} /> 导入后直接发布
                   <Button type="primary" icon={<ImportOutlined />} loading={busy === 'import'} disabled={!importText.trim()} onClick={doImport}>导入</Button>

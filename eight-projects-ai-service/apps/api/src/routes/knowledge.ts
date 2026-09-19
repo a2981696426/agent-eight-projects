@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { chunkText } from '@eight/agent-core';
 import type { KnowledgeDoc } from '@eight/shared';
 import { J, nowIso, openDb, uid, type Db } from '../db.ts';
-import { knowledgeIndex, refreshIndex, vectorStats, vectorStore } from '../services/chain.ts';
+import { getVectorStore, knowledgeIndex, refreshIndex, vectorStats } from '../services/chain.ts';
 import { enqueueEmbed } from '../services/jobs.ts';
+import { faqToDoc, parseFaqCsv, parseFaqJson } from '../services/knowledge-import.ts';
 import { extractFaq, similarQuestions } from '../services/aigc.ts';
 
 const db = () => openDb();
@@ -79,21 +80,22 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     await db().run('UPDATE knowledge_docs SET status=?, updated_at=? WHERE id=?', b.action === 'publish' ? 'published' : 'draft', nowIso(), id);
     const indexed = await refreshIndex();
     if (b.action === 'publish') await enqueueEmbed(id);
-    else if (vectorStore) await vectorStore.deleteDoc(id);
+    else await getVectorStore()?.deleteDoc(id);
     return { doc: await toDoc((await db().get('SELECT * FROM knowledge_docs WHERE id=?', id))!), indexed };
   });
   app.delete('/api/knowledge/docs/:id', async (req) => {
     const { id } = req.params as { id: string };
     await db().run('DELETE FROM knowledge_chunks WHERE doc_id=?', id);
     await db().run('DELETE FROM knowledge_docs WHERE id=?', id);
-    if (vectorStore) await vectorStore.deleteDoc(id);
+    await getVectorStore()?.deleteDoc(id);
     await refreshIndex();
     return { ok: true };
   });
   /** 全量重建向量（换供应商/维度后；管理员） */
   app.post('/api/knowledge/reindex-vectors', async (_req, reply) => {
-    if (!vectorStore) return reply.code(400).send({ error: '未启用向量检索（EMBEDDING_PROVIDER=off 或 pgvector 不可用）' });
-    await db().run('DELETE FROM knowledge_vectors WHERE provider<>? OR model<>?', vectorStore.provider.id, vectorStore.provider.model);
+    const vs = getVectorStore();
+    if (!vs) return reply.code(400).send({ error: '未启用向量检索（EMBEDDING_PROVIDER=off 或 pgvector 不可用）' });
+    await db().run('DELETE FROM knowledge_vectors WHERE provider<>? OR model<>?', vs.provider.id, vs.provider.model);
     const jobId = await enqueueEmbed(null);
     return { queued: jobId != null, ...(await vectorStats()) };
   });
@@ -103,17 +105,28 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     const hits = await knowledgeIndex().search(b.q, { topK: b.topK, tags: b.tags });
     return { q: b.q, hits, indexSize: knowledgeIndex().size, mode: knowledgeIndex().mode };
   });
-  /** 批量导入：按 --- 或标题分隔的多篇资料 */
+  /** 批量导入：text（按 --- 或标题分隔的多篇资料）| faq-csv（云商导出 CSV，中文表头自动映射）| faq-json */
   app.post('/api/knowledge/import', async (req) => {
-    const b = z.object({ text: z.string().min(1).max(200000), category: z.string().default('导入'), tags: z.array(z.string()).default([]), publish: z.boolean().default(false) }).parse(req.body);
-    const parts = b.text.split(/\n-{3,}\n|\n(?=#\s)/).map((p) => p.trim()).filter((p) => p.length > 10);
+    const b = z.object({ text: z.string().min(1).max(2_000_000), format: z.enum(['text', 'faq-csv', 'faq-json']).default('text'), category: z.string().default('导入'), tags: z.array(z.string()).default([]), publish: z.boolean().default(false) }).parse(req.body);
+    const docs: { title: string; category: string; tags: string[]; content: string }[] = [];
+    if (b.format === 'text') {
+      for (const p of b.text.split(/\n-{3,}\n|\n(?=#\s)/).map((x) => x.trim()).filter((x) => x.length > 10)) {
+        docs.push({ title: p.split('\n')[0].replace(/^#+\s*/, '').slice(0, 80) || '未命名资料', category: b.category, tags: b.tags, content: p });
+      }
+    } else {
+      const items = b.format === 'faq-csv' ? parseFaqCsv(b.text) : parseFaqJson(b.text);
+      if (!items.length) throw Object.assign(new Error('没有解析到有效的问答对（需要「标准问/答案」或 question/answer 列）'), { status: 400 });
+      for (const it of items) {
+        const d = faqToDoc(it);
+        docs.push({ ...d, category: it.category === 'FAQ' && b.category !== '导入' ? b.category : d.category, tags: [...new Set([...d.tags, ...b.tags])] });
+      }
+    }
     const created: string[] = [];
     await db().tx(async (t) => {
-      for (const p of parts) {
-        const firstLine = p.split('\n')[0].replace(/^#+\s*/, '').slice(0, 80);
+      for (const d of docs) {
         const id = uid('kb-');
-        await t.run('INSERT INTO knowledge_docs VALUES (?,?,?,?,?,?,?,?,?)', id, firstLine || '未命名资料', b.category, J.str(b.tags), p, b.publish ? 'published' : 'draft', 1, nowIso(), 'import');
-        await rechunk(t, id, p, b.tags);
+        await t.run('INSERT INTO knowledge_docs VALUES (?,?,?,?,?,?,?,?,?)', id, d.title, d.category, J.str(d.tags), d.content, b.publish ? 'published' : 'draft', 1, nowIso(), b.format === 'text' ? 'import' : 'faq');
+        await rechunk(t, id, d.content, d.tags);
         created.push(id);
       }
     });
@@ -121,7 +134,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       await refreshIndex();
       await enqueueEmbed(null);
     }
-    return { created: created.length, ids: created };
+    return { created: created.length, ids: created, format: b.format };
   });
   app.post('/api/knowledge/faq-extract', async (req) => {
     const b = z.object({ text: z.string().min(20).max(20000).optional(), docId: z.string().optional(), max: z.number().int().min(1).max(20).default(8) }).parse(req.body);

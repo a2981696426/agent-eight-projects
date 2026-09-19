@@ -25,11 +25,16 @@ export const llm = buildRouter();
 /* ───────────── 知识索引：BM25（发布态 chunk）+ 向量（pgvector，供应商可用时） ───────────── */
 const bm25 = new BM25Index();
 export const embeddingProvider = embeddingFromEnv();
-export const vectorStore = embeddingProvider && hasVector() ? new VectorStore(embeddingProvider) : null;
+let vectorStoreInst: VectorStore | null | undefined;
+/** 向量库：initDb 之后才知道 pgvector 是否可用，因此惰性创建 */
+export function getVectorStore(): VectorStore | null {
+  if (vectorStoreInst === undefined) vectorStoreInst = embeddingProvider && hasVector() ? new VectorStore(embeddingProvider) : null;
+  return vectorStoreInst;
+}
 let retriever: HybridRetriever | null = null;
 /** 检索器（混合或纯 BM25）：注入执行链 ChainContext.index */
 export function knowledgeIndex(): HybridRetriever {
-  return (retriever ??= new HybridRetriever(bm25, vectorStore, embeddingProvider));
+  return (retriever ??= new HybridRetriever(bm25, getVectorStore(), embeddingProvider));
 }
 /** 重建 BM25；返回已发布块数。向量缺口由 scheduleMissingEmbeddings 补齐（异步） */
 export async function refreshIndex() {
@@ -42,6 +47,7 @@ export async function refreshIndex() {
 }
 /** 为指定文档（或全部缺失块）写入向量；供作业与同步路径调用 */
 export async function embedDoc(docId: string | null): Promise<number> {
+  const vectorStore = getVectorStore();
   if (!vectorStore) return 0;
   const rows = docId
     ? await db().all<{ id: string; doc_id: string; text: string; title: string }>("SELECT c.id, c.doc_id, c.text, d.title FROM knowledge_chunks c JOIN knowledge_docs d ON d.id=c.doc_id WHERE d.status='published' AND c.doc_id=?", docId)
@@ -54,6 +60,7 @@ export async function embedDoc(docId: string | null): Promise<number> {
   return vectorStore.upsertChunks(rows.map((r) => ({ id: r.id, docId: r.doc_id, text: r.text, title: r.title })));
 }
 export async function vectorStats() {
+  const vectorStore = getVectorStore();
   if (!vectorStore || !embeddingProvider) return { enabled: false as const, provider: null, model: null, count: 0, published: bm25.size, coverage: 0 };
   const count = await vectorStore.count();
   const published = bm25.size;
