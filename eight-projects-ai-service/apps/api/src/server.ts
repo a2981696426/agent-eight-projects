@@ -10,6 +10,8 @@ import { initDb, openDb } from './db.ts';
 import { seed } from './seed.ts';
 import { knowledgeIndex, llm, refreshIndex } from './services/chain.ts';
 import { installAuth, seedUsers } from './services/auth.ts';
+import { jobsStatus, startJobs, stopJobs } from './services/jobs.ts';
+import { channelStatus } from './services/channels.ts';
 import { conversationRoutes } from './routes/conversations.ts';
 import { caseRoutes } from './routes/cases.ts';
 import { knowledgeRoutes } from './routes/knowledge.ts';
@@ -52,6 +54,8 @@ export async function buildServer() {
     },
     knowledgeIndexed: knowledgeIndex().size,
     db: openDb().kind,
+    jobs: jobsStatus(),
+    channels: await channelStatus(),
     time: new Date().toISOString(),
   }));
 
@@ -99,6 +103,9 @@ if (process.argv[1]?.endsWith('server.ts')) {
   const s = await seed(false);
   const app = await buildServer();
   await refreshIndex();
+  await startJobs();
+  app.addHook('onClose', async () => stopJobs());
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => void app.close().then(() => process.exit(0)));
   await app.listen({ port: env.apiPort, host: '0.0.0.0' });
-  app.log.info(`version=${VERSION} db=${openDb().kind} mode=${env.serveWeb ? 'production(serve web)' : 'development'} seeded=${s.seeded} llmConfigured=${llm.configured} providers=${llm.status().map((p) => p.id).join(',')} knowledgeIndexed=${knowledgeIndex().size}`);
+  app.log.info(`version=${VERSION} db=${openDb().kind} jobs=${jobsStatus().backend} mode=${env.serveWeb ? 'production(serve web)' : 'development'} seeded=${s.seeded} llmConfigured=${llm.configured} providers=${llm.status().map((p) => p.id).join(',')} knowledgeIndexed=${knowledgeIndex().size}`);
 }

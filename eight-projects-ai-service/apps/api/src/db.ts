@@ -60,7 +60,7 @@ const normalizeParams = (params: unknown[]) => params.map((p) => (p === undefine
 class PgDriver implements SqlDriver {
   readonly kind = 'pg' as const;
   private readonly pool: Pool;
-  constructor(connectionString: string) {
+  constructor(readonly connectionString: string) {
     // int8 / numeric 默认返回字符串，这里统一转 number（COUNT/SUM/ROUND/AVG）
     pgTypes.setTypeParser(20, Number);
     pgTypes.setTypeParser(1700, Number);
@@ -98,7 +98,7 @@ class PgDriver implements SqlDriver {
 /* ───────────── 驱动：PGlite（本机/测试，进程内 Postgres，零外部依赖） ───────────── */
 class PgliteDriver implements SqlDriver {
   readonly kind = 'pglite' as const;
-  private constructor(private readonly pg: PGlite) {}
+  private constructor(readonly pg: PGlite) {}
   static async create(dataDir: string | null) {
     if (dataDir) mkdirSync(dataDir, { recursive: true });
     const pg = await PGlite.create({
@@ -233,6 +233,11 @@ export async function initDb(opts: { url?: string; dataDir?: string | null } = {
   await migrate(driver);
   instance = new Db(driver, driver);
   return instance;
+}
+/** 供 pg-boss 等需要原生连接的组件使用：pg → 连接串；PGlite → 实例（单进程共享） */
+export function driverHandle(): { kind: 'pg'; connectionString: string } | { kind: 'pglite'; pglite: PGlite } {
+  if (!driver) throw new Error('数据库未初始化：请先 await initDb()');
+  return driver instanceof PgDriver ? { kind: 'pg', connectionString: driver.connectionString } : { kind: 'pglite', pglite: (driver as PgliteDriver).pg };
 }
 /** 同步访问器：initDb 之后可在任意位置使用 */
 export function openDb(): Db {

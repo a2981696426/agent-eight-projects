@@ -5,6 +5,7 @@ import { appendMessage, loadCustomer, loadMessages, loadTrace, rowToConversation
 import { classify, summarize } from '../services/aigc.ts';
 import { activeTask, cancelActiveTasks, claimActiveTask, ensureHandoffTask } from '../services/handoff.ts';
 import { createCase, toCase } from './cases.ts';
+import { enqueueDeliver } from '../services/jobs.ts';
 
 const db = () => openDb();
 const audit = (actor: string, action: string, target: string, detail: unknown = null) => db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), actor, action, target, J.str(detail));
@@ -70,6 +71,8 @@ export async function conversationRoutes(app: FastifyInstance) {
       if (row.controller === 'bot') return reply.code(409).send({ error: '当前由机器人接待，请先接管再回复', code: 'TAKEOVER_REQUIRED' });
       const m = await appendMessage(id, 'agent', body.text);
       await db().run("UPDATE conversations SET status='open' WHERE id=? AND status='waiting_human'", id);
+      // 坐席回复经渠道出站队列投递（web 访客端自行轮询，投递会记为 skipped）
+      await enqueueDeliver(id, m.id);
       return { message: m, conversation: await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!) };
     }
     if (row.controller !== 'bot') {
