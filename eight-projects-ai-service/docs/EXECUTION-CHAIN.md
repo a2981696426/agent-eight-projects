@@ -29,7 +29,7 @@ Benchmark（同一 10 例）：平均耗时 8825ms → 5399ms，决策准确率 
 ## 与业务系统的关系
 
 - **场景包 = 数字员工**（`packages/agent-core/src/scenarios.ts`）：`logistics` 物流智能体、`invoice` 发票智能体、`refund_price_diff` 退款/差价智能体、`presale` 售前、`complaint` 投诉（自治上限 L0）、`general` 通用。新增一个售后能力 = 新增一个场景包 + 需要的工具。
-- **工具**（`apps/api/src/services/chain.ts`）：当前接的是 SQLite 中的模拟业务数据（订单、物流轨迹、发票、退款、保价核算、CRM、商品目录）。接真实 ERP/WMS/DMS 时只替换工具的 `run`，链与页面不变。
+- **工具**（`apps/api/src/services/chain.ts`）：当前接的是数据库中的模拟业务数据（订单、物流轨迹、发票、退款、保价核算、CRM、商品目录）。接真实 ERP/WMS/DMS 时只替换工具的 `run`，链与页面不变。
 - **动作工具**（`mutating: true`，如 `tickets.create`）只在第 8 阶段被自治门禁放行后执行；退款/补发/开票类动作永远不会自动执行，只形成「待人工确认」的提案。
 
 ## 会话落库规则（`runForConversation`）

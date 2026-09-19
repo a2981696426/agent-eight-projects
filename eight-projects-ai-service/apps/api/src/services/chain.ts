@@ -32,7 +32,7 @@ export async function refreshIndex() {
   return chunks.length;
 }
 
-/* ───────────── 业务工具（模拟业务系统，数据来自 SQLite） ───────────── */
+/* ───────────── 业务工具（模拟业务系统，数据来自本库；接真实平台数据源时只替换 run） ───────────── */
 export const tools = new ToolRegistry()
   .register({
     name: 'crm.lookupCustomer',
