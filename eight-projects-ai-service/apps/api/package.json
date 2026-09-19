@@ -9,7 +9,8 @@
     "seed": "tsx src/seed.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "replay": "tsx src/eval/replay-cli.ts"
   },
   "dependencies": {
     "@eight/agent-core": "workspace:*",

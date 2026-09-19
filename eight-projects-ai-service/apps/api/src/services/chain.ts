@@ -359,8 +359,11 @@ export async function runForConversation(conversationId: string, text: string, o
   return { trace, userMessage, botMessage, conversation: await rowToConversation((await d.get('SELECT * FROM conversations WHERE id=?', conversationId))!) };
 }
 
-/** 无会话上下文的单次试跑（Agent Studio 测试台 / Benchmark） */
-export async function runStandalone(text: string, opts: { agent?: AgentConfig; customerId?: string | null; channel?: string } = {}) {
+/** 无会话上下文的单次试跑（Agent Studio 测试台 / Benchmark / L1 回放：可注入决策时点的历史消息与槽位） */
+export async function runStandalone(
+  text: string,
+  opts: { agent?: AgentConfig; customerId?: string | null; channel?: string; messages?: Message[]; history?: { slots: Record<string, string>; scenario: string | null }; conversationId?: string; persist?: boolean; at?: Date } = {},
+) {
   const agent = opts.agent ?? (await loadAgent());
   const customer = await loadCustomer(opts.customerId ?? null);
   const ctx: ChainContext = {
@@ -368,12 +371,12 @@ export async function runStandalone(text: string, opts: { agent?: AgentConfig; c
     tools,
     index: knowledgeIndex(),
     agent,
-    conversation: { id: `sandbox-${uid()}`, customerId: customer?.id ?? null, channel: opts.channel ?? 'web', messages: [] },
+    conversation: { id: opts.conversationId ?? `sandbox-${uid()}`, customerId: customer?.id ?? null, channel: opts.channel ?? 'web', messages: opts.messages ?? [] },
     customer,
-    history: { slots: {}, scenario: null },
+    history: opts.history ?? { slots: {}, scenario: null },
     traceId: uid('tr-'),
     responseWindow: (p) => windowSentence(p),
-    whitelist: await whitelistFor(opts.channel ?? 'web'),
+    whitelist: await whitelistFor(opts.channel ?? 'web', opts.at),
   };
   // 沙箱中不允许动作工具真正建单
   const sandboxTools = new ToolRegistry();
@@ -383,6 +386,6 @@ export async function runStandalone(text: string, opts: { agent?: AgentConfig; c
   }
   ctx.tools = sandboxTools;
   const trace = await runChain(ctx, { text });
-  await saveTrace(trace);
+  if (opts.persist !== false) await saveTrace(trace);
   return trace;
 }

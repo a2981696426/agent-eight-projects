@@ -1,0 +1,111 @@
+{
+  "generatedAt": "2026-09-19T11:08:35.138Z",
+  "versions": {
+    "agent": "agent-cs-main@v1",
+    "whitelistOwned": "owned@1",
+    "whitelistPlatform": "platform@1",
+    "knowledgeSnapshot": "a3fdb6bad59d",
+    "retrievalMode": "hybrid",
+    "embedding": "mock/mock-bigram-hash",
+    "llm": "MOCK（结果不代表真实模型）",
+    "workCalendar": "09:00-18:00 d1-5",
+    "codeVersion": "dev"
+  },
+  "input": {
+    "conversations": 10,
+    "visitorTurns": 16,
+    "withTimestamps": 16,
+    "withOrderId": 11,
+    "reconstructable": 16,
+    "reconstructRate": 1,
+    "originalHandoffConversations": 5
+  },
+  "decisions": {
+    "auto_reply": 8,
+    "human_confirm": 4,
+    "escalate": 4
+  },
+  "byChannel": {
+    "web": {
+      "auto_reply": 5,
+      "escalate": 2
+    },
+    "wechat": {
+      "auto_reply": 3,
+      "human_confirm": 1,
+      "escalate": 2
+    },
+    "app": {
+      "human_confirm": 3
+    }
+  },
+  "byScenario": {
+    "logistics": {
+      "auto_reply": 2
+    },
+    "invoice": {
+      "auto_reply": 2
+    },
+    "presale": {
+      "auto_reply": 3
+    },
+    "refund_price_diff": {
+      "human_confirm": 3
+    },
+    "general": {
+      "human_confirm": 1,
+      "escalate": 2,
+      "auto_reply": 1
+    },
+    "complaint": {
+      "escalate": 2
+    }
+  },
+  "byRisk": {
+    "L0": 10,
+    "L2": 3,
+    "L3": 3
+  },
+  "byWorkTime": {
+    "work": {
+      "auto_reply": 5,
+      "human_confirm": 1,
+      "escalate": 2
+    },
+    "off": {
+      "auto_reply": 3,
+      "human_confirm": 3,
+      "escalate": 2
+    },
+    "unknown": {}
+  },
+  "guards": {
+    "medicalAdvice": 0,
+    "commitment": 0,
+    "unsupportedAmount": 0,
+    "invalidCitation": 0,
+    "degraded": 0
+  },
+  "comparison": {
+    "originalBotAnswered": 14,
+    "ourAutoOnThose": 7,
+    "originalHumanAnswered": 2,
+    "ourNonAutoOnThose": 1
+  },
+  "latency": {
+    "avgMs": 4,
+    "p95Ms": 13,
+    "avgLlmCalls": 2.13
+  },
+  "usability": {
+    "status": "不可判定",
+    "labeled": 0,
+    "denominator": 0,
+    "numerator": 0,
+    "rate": null,
+    "postHoc": 0,
+    "undecidable": 0,
+    "bySlice": {},
+    "guardEvents": {}
+  }
+}
