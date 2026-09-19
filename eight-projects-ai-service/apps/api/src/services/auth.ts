@@ -33,12 +33,12 @@ export const DEMO_USERS: { username: string; password: string; name: string; rol
   { username: 'analyst', password: 'analyst123', name: '质检员李明', role: 'analyst' },
 ];
 
-export function seedUsers() {
+export async function seedUsers() {
   const d = db();
   for (const u of DEMO_USERS) {
-    if (d.get('SELECT id FROM users WHERE username=?', u.username)) continue;
+    if (await d.get('SELECT id FROM users WHERE username=?', u.username)) continue;
     const { salt, hash } = hashPassword(u.password);
-    d.run('INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?)', uid('u-'), u.username, hash, salt, u.name, u.role, 0, nowIso(), null);
+    await d.run('INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?)', uid('u-'), u.username, hash, salt, u.name, u.role, 0, nowIso(), null);
   }
 }
 
@@ -79,25 +79,25 @@ export function requiredRoles(method: string, url: string): { roles: Role[]; lab
   return r ? { roles: r.roles, label: r.label } : null;
 }
 
-export function createSession(userId: string, userAgent: string | undefined) {
+export async function createSession(userId: string, userAgent: string | undefined) {
   const id = randomBytes(24).toString('base64url');
   const now = Date.now();
-  db().run('INSERT INTO sessions VALUES (?,?,?,?,?)', id, userId, new Date(now).toISOString(), new Date(now + SESSION_TTL_MS).toISOString(), userAgent ?? null);
-  db().run('UPDATE users SET last_login_at=? WHERE id=?', nowIso(), userId);
+  await db().run('INSERT INTO sessions VALUES (?,?,?,?,?)', id, userId, new Date(now).toISOString(), new Date(now + SESSION_TTL_MS).toISOString(), userAgent ?? null);
+  await db().run('UPDATE users SET last_login_at=? WHERE id=?', nowIso(), userId);
   return id;
 }
-export function destroySession(id: string) {
-  db().run('DELETE FROM sessions WHERE id=?', id);
+export async function destroySession(id: string) {
+  await db().run('DELETE FROM sessions WHERE id=?', id);
 }
-export function userBySession(id: string | undefined): SessionUser | null {
+export async function userBySession(id: string | undefined): Promise<SessionUser | null> {
   if (!id) return null;
-  const row = db().get<{ user_id: string; expires_at: string }>('SELECT user_id, expires_at FROM sessions WHERE id=?', id);
+  const row = await db().get<{ user_id: string; expires_at: string }>('SELECT user_id, expires_at FROM sessions WHERE id=?', id);
   if (!row || new Date(row.expires_at).getTime() < Date.now()) return null;
-  const u = db().get<{ id: string; username: string; name: string; role: Role; disabled: number }>('SELECT id, username, name, role, disabled FROM users WHERE id=?', row.user_id);
+  const u = await db().get<{ id: string; username: string; name: string; role: Role; disabled: number }>('SELECT id, username, name, role, disabled FROM users WHERE id=?', row.user_id);
   return u && !u.disabled ? { id: u.id, username: u.username, name: u.name, role: u.role } : null;
 }
-export function authenticate(username: string, password: string): SessionUser | null {
-  const u = db().get<{ id: string; username: string; name: string; role: Role; password_hash: string; salt: string; disabled: number }>('SELECT * FROM users WHERE username=?', username);
+export async function authenticate(username: string, password: string): Promise<SessionUser | null> {
+  const u = await db().get<{ id: string; username: string; name: string; role: Role; password_hash: string; salt: string; disabled: number }>('SELECT * FROM users WHERE username=?', username);
   if (!u || u.disabled || !verifyPassword(password, u.salt, u.password_hash)) return null;
   return { id: u.id, username: u.username, name: u.name, role: u.role };
 }
@@ -119,12 +119,12 @@ export function installAuth(app: FastifyInstance) {
   app.decorateRequest('user', null);
   app.addHook('onRequest', async (req, reply) => {
     if (!req.url.startsWith('/api/')) return;
-    req.user = userBySession(readSessionId(req));
+    req.user = await userBySession(readSessionId(req));
     if (isPublic(req.method, req.url)) return;
     if (!req.user) return reply.code(401).send({ error: '请先登录', code: 'UNAUTHENTICATED' });
     const need = requiredRoles(req.method, req.url);
     if (need && !need.roles.includes(req.user.role)) {
-      db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), req.user.username, 'auth.forbidden', `${req.method} ${req.url.split('?')[0]}`, J.str({ role: req.user.role, need: need.roles }));
+      await db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), req.user.username, 'auth.forbidden', `${req.method} ${req.url.split('?')[0]}`, J.str({ role: req.user.role, need: need.roles }));
       return reply.code(403).send({ error: `当前角色（${req.user.role}）无权执行「${need.label}」，需要：${need.roles.join(' / ')}`, code: 'FORBIDDEN' });
     }
   });
@@ -132,19 +132,19 @@ export function installAuth(app: FastifyInstance) {
   app.post('/api/auth/login', async (req, reply) => {
     const b = (req.body ?? {}) as { username?: string; password?: string };
     if (!b.username || !b.password) return reply.code(400).send({ error: '请输入用户名和密码' });
-    const user = authenticate(b.username, b.password);
+    const user = await authenticate(b.username, b.password);
     if (!user) {
-      db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), b.username, 'auth.login_failed', 'password', null);
+      await db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), b.username, 'auth.login_failed', 'password', null);
       return reply.code(401).send({ error: '用户名或密码错误' });
     }
-    const sid = createSession(user.id, req.headers['user-agent']);
+    const sid = await createSession(user.id, req.headers['user-agent']);
     reply.setCookie(COOKIE, sid, { signed: true, httpOnly: true, sameSite: 'lax', path: '/', maxAge: SESSION_TTL_MS / 1000, secure: 'auto' });
-    db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), user.username, 'auth.login', user.role, null);
+    await db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), user.username, 'auth.login', user.role, null);
     return { user };
   });
   app.post('/api/auth/logout', async (req, reply) => {
     const sid = readSessionId(req);
-    if (sid) destroySession(sid);
+    if (sid) await destroySession(sid);
     reply.clearCookie(COOKIE, { path: '/' });
     return { ok: true };
   });

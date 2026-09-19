@@ -1,6 +1,6 @@
 import { chunkText } from '@eight/agent-core';
 import type { AgentConfig, IvrFlow, OutboundCampaign, QualityRule } from '@eight/shared';
-import { J, nowIso, openDb, uid } from './db.ts';
+import { J, initDb, nowIso, openDb, uid } from './db.ts';
 
 const daysAgo = (n: number, h = 10) => {
   const d = new Date();
@@ -155,11 +155,11 @@ const KNOWLEDGE: { title: string; category: string; tags: string[]; content: str
   },
 ];
 
-export function seed(force = false) {
+export async function seed(force = false) {
   const db = openDb();
-  if (!force && db.count('customers') > 0) return { seeded: false };
-  db.tx(() => {
-    for (const t of ['customers', 'orders', 'logistics', 'invoices', 'refunds', 'conversations', 'messages', 'traces', 'tickets', 'knowledge_docs', 'knowledge_chunks', 'agents', 'agent_versions', 'quality_rules', 'quality_results', 'voc_items', 'ivr_flows', 'campaigns', 'saved_reports', 'aigc_jobs', 'benchmark_cases', 'benchmark_runs', 'audit_log', 'employee_runs']) db.run(`DELETE FROM ${t}`);
+  if (!force && (await db.count('customers')) > 0) return { seeded: false };
+  await db.tx(async (tx) => {
+    for (const t of ['customers', 'orders', 'logistics', 'invoices', 'refunds', 'conversations', 'messages', 'traces', 'tickets', 'knowledge_docs', 'knowledge_chunks', 'agents', 'agent_versions', 'quality_rules', 'quality_results', 'voc_items', 'ivr_flows', 'campaigns', 'saved_reports', 'aigc_jobs', 'benchmark_cases', 'benchmark_runs', 'audit_log', 'employee_runs']) await tx.run(`DELETE FROM ${t}`);
 
     const customers = [
       ['cust-001', '张伟', '13812340001', 'vip', 'taobao', ['复购', '糖友'], '2 次复购，偏好顺丰'],
@@ -169,7 +169,7 @@ export function seed(force = false) {
       ['cust-005', '陈静', '13512340005', 'normal', 'jd', [], ''],
       ['cust-006', '赵敏', '13312340006', 'vip', 'web', ['投诉历史'], '曾因物流延迟投诉'],
     ] as const;
-    for (const [id, name, phone, level, channel, tags, note] of customers) db.run('INSERT INTO customers VALUES (?,?,?,?,?,?,?)', id, name, phone, level, channel, J.str(tags), note);
+    for (const [id, name, phone, level, channel, tags, note] of customers) await tx.run('INSERT INTO customers VALUES (?,?,?,?,?,?,?)', id, name, phone, level, channel, J.str(tags), note);
 
     const orders = [
       // id, customer, product, sku, amount, paid, status, created, paid_at, shipped_at, address, promo_price, promo_start, promo_end, protect
@@ -181,7 +181,7 @@ export function seed(force = false) {
       ['20260912000987', 'cust-006', 'M8 动态血糖仪传感器 3 枚装', 'M8-3', 849, 799, 'refunding', daysAgo(9), daysAgo(9), daysAgo(8), '江苏省南京市鼓楼区中山路 1 号', null, null, null, 15],
       ['20260901000111', 'cust-001', 'M8 动态血糖仪传感器', 'M8-1', 299, 299, 'completed', daysAgo(20), daysAgo(20), daysAgo(19), '浙江省杭州市滨江区网商路 599 号', null, null, null, 15],
     ] as const;
-    for (const o of orders) db.run('INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...(o as unknown as (string | number | null)[]));
+    for (const o of orders) await tx.run('INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...(o as unknown as (string | number | null)[]));
 
     const logistics = [
       ['20260918000123', '顺丰速运', 'SF1234567890123', 'in_transit_stalled', daysAgo(4, 14), daysAgo(1), [
@@ -210,7 +210,7 @@ export function seed(force = false) {
         { at: daysAgo(2, 9), text: '退货件已签收（商家仓）' },
       ]],
     ] as const;
-    for (const l of logistics) db.run('INSERT INTO logistics VALUES (?,?,?,?,?,?,?)', l[0], l[1], l[2], l[3], l[4], l[5], J.str(l[6]));
+    for (const l of logistics) await tx.run('INSERT INTO logistics VALUES (?,?,?,?,?,?,?)', l[0], l[1], l[2], l[3], l[4], l[5], J.str(l[6]));
 
     const invoices = [
       ['20260915000456', 'issued', '李娜', null, '电子普通发票', daysAgo(9), 'https://invoice.example.com/20260915000456.pdf', ''],
@@ -218,21 +218,21 @@ export function seed(force = false) {
       ['20260910000321', 'issued', '刘洋', null, '电子普通发票', daysAgo(4), 'https://invoice.example.com/20260910000321.pdf', ''],
       ['20260901000111', 'issued', '张伟', null, '电子普通发票', daysAgo(18), 'https://invoice.example.com/20260901000111.pdf', ''],
     ] as const;
-    for (const i of invoices) db.run('INSERT INTO invoices VALUES (?,?,?,?,?,?,?,?)', ...(i as unknown as (string | null)[]));
+    for (const i of invoices) await tx.run('INSERT INTO invoices VALUES (?,?,?,?,?,?,?,?)', ...(i as unknown as (string | null)[]));
 
-    db.run('INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?,?)', 'rf-001', '20260912000987', 'return_refund', 799, 'inspecting', daysAgo(3), null, '佩戴后数据不准', '验货通过后 1-3 个工作日到账');
-    db.run('INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?,?)', 'rf-002', '20260901000111', 'partial', 20, 'completed', daysAgo(17), daysAgo(15), '赠品缺失补差', '');
+    await tx.run('INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?,?)', 'rf-001', '20260912000987', 'return_refund', 799, 'inspecting', daysAgo(3), null, '佩戴后数据不准', '验货通过后 1-3 个工作日到账');
+    await tx.run('INSERT INTO refunds VALUES (?,?,?,?,?,?,?,?,?)', 'rf-002', '20260901000111', 'partial', 20, 'completed', daysAgo(17), daysAgo(15), '赠品缺失补差', '');
 
     // 知识库
     for (const [i, k] of KNOWLEDGE.entries()) {
       const docId = `kb-${String(i + 1).padStart(3, '0')}`;
-      db.run('INSERT INTO knowledge_docs VALUES (?,?,?,?,?,?,?,?,?)', docId, k.title, k.category, J.str(k.tags), k.content, 'published', 1, nowIso(), 'import');
-      chunkText(k.content).forEach((text, seq) => db.run('INSERT INTO knowledge_chunks VALUES (?,?,?,?,?)', `${docId}-c${seq + 1}`, docId, seq + 1, text, J.str(k.tags)));
+      await tx.run('INSERT INTO knowledge_docs VALUES (?,?,?,?,?,?,?,?,?)', docId, k.title, k.category, J.str(k.tags), k.content, 'published', 1, nowIso(), 'import');
+      for (const [seq, text] of chunkText(k.content).entries()) await tx.run('INSERT INTO knowledge_chunks VALUES (?,?,?,?,?)', `${docId}-c${seq + 1}`, docId, seq + 1, text, J.str(k.tags));
     }
 
     // Agent
-    db.run('INSERT INTO agents VALUES (?,?,?,?,?,?)', DEFAULT_AGENT.id, DEFAULT_AGENT.name, 1, 'published', J.str(DEFAULT_AGENT), nowIso());
-    db.run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), DEFAULT_AGENT.id, 1, J.str(DEFAULT_AGENT), nowIso(), '初始版本');
+    await tx.run('INSERT INTO agents VALUES (?,?,?,?,?,?)', DEFAULT_AGENT.id, DEFAULT_AGENT.name, 1, 'published', J.str(DEFAULT_AGENT), nowIso());
+    await tx.run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), DEFAULT_AGENT.id, 1, J.str(DEFAULT_AGENT), nowIso(), '初始版本');
 
     // 历史会话（用于工作台/质检/VoC/报表演示）
     const convs: { id: string; title: string; channel: string; customer: string; status: string; controller: string; assignee: string | null; scenario: string; priority: string | null; day: number; sat: number | null; msgs: [string, string, number][] }[] = [
@@ -261,13 +261,13 @@ export function seed(force = false) {
     for (const c of convs) {
       const created = daysAgo(c.day, 9);
       let last = created;
-      db.run('INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', c.id, c.title, c.channel, c.customer, c.status, c.controller, c.assignee, c.scenario, c.priority, created, created, null, DEFAULT_AGENT.id, c.sat);
+      await tx.run('INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', c.id, c.title, c.channel, c.customer, c.status, c.controller, c.assignee, c.scenario, c.priority, created, created, null, DEFAULT_AGENT.id, c.sat);
       for (const [role, text, min] of c.msgs) {
         const at = new Date(new Date(created).getTime() + min * 60_000).toISOString();
         last = at;
-        db.run('INSERT INTO messages VALUES (?,?,?,?,?,?,?)', uid('m-'), c.id, role, text, at, null, null);
+        await tx.run('INSERT INTO messages VALUES (?,?,?,?,?,?,?)', uid('m-'), c.id, role, text, at, null, null);
       }
-      db.run('UPDATE conversations SET last_message_at=? WHERE id=?', last, c.id);
+      await tx.run('UPDATE conversations SET last_message_at=? WHERE id=?', last, c.id);
     }
 
     // 工单
@@ -277,7 +277,7 @@ export function seed(force = false) {
       ['TK-2026-0903', '退差价申请 20 元', '退款', 'pending', 'P2', 'conv-003', 'cust-004', '刘洋', null, '订单 20260910000321 保价期内降价 20 元，待主管审核。', daysLater(2), daysAgo(0), daysAgo(0), 'chain'],
       ['TK-2026-0904', '投诉：退款超时', '投诉', 'processing', 'P1', 'conv-004', 'cust-006', '赵敏', '主管王琳', '退货件已签收，验货中，用户投诉处理慢。', daysLater(0), daysAgo(0), daysAgo(0), 'agent'],
     ] as const;
-    for (const t of tickets) db.run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...(t as unknown as (string | null)[]), J.str([{ at: t[11], by: t[13] === 'chain' ? '执行链' : t[8] ?? '系统', action: '创建工单' }]));
+    for (const t of tickets) await tx.run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...(t as unknown as (string | null)[]), J.str([{ at: t[11], by: t[13] === 'chain' ? '执行链' : t[8] ?? '系统', action: '创建工单' }]));
 
     // 质检规则
     const rules: QualityRule[] = [
@@ -288,7 +288,7 @@ export function seed(force = false) {
       { id: 'qr-promise', name: '承诺类表述（需人工复核）', kind: 'forbidden_word', config: { words: ['一定', '肯定能', '保证'] }, score: -8, enabled: true },
       { id: 'qr-semantic', name: '大模型语义质检', kind: 'semantic', config: { aspects: ['同理心', '解决方案完整性', '信息准确性', '合规性'] }, score: 0, enabled: true },
     ];
-    for (const r of rules) db.run('INSERT INTO quality_rules VALUES (?,?)', r.id, J.str(r));
+    for (const r of rules) await tx.run('INSERT INTO quality_rules VALUES (?,?)', r.id, J.str(r));
 
     // 呼入机器人流程
     const ivr: IvrFlow = {
@@ -306,7 +306,7 @@ export function seed(force = false) {
       ],
       updatedAt: nowIso(),
     };
-    db.run('INSERT INTO ivr_flows VALUES (?,?,?)', ivr.id, J.str(ivr), nowIso());
+    await tx.run('INSERT INTO ivr_flows VALUES (?,?,?)', ivr.id, J.str(ivr), nowIso());
 
     // 外呼任务
     const campaign: OutboundCampaign = {
@@ -319,7 +319,7 @@ export function seed(force = false) {
       stats: { total: 3, connected: 0, interested: 0, refused: 0 },
       createdAt: nowIso(),
     };
-    db.run('INSERT INTO campaigns VALUES (?,?,?)', campaign.id, J.str(campaign), nowIso());
+    await tx.run('INSERT INTO campaigns VALUES (?,?,?)', campaign.id, J.str(campaign), nowIso());
 
     // Benchmark 用例（Agent Studio 评测）
     const cases: [string, string, string, string, string | null][] = [
@@ -334,12 +334,13 @@ export function seed(force = false) {
       ['你们太差了，我要去 12315 投诉', 'complaint', 'escalate', 'L3 直升', 'cust-006'],
       ['转人工', 'general', 'escalate', '用户要求人工', 'cust-002'],
     ];
-    for (const [text, sc, dec, note, cust] of cases) db.run('INSERT INTO benchmark_cases VALUES (?,?,?,?,?,?)', uid('bc-'), text, sc, dec, note, cust);
+    for (const [text, sc, dec, note, cust] of cases) await tx.run('INSERT INTO benchmark_cases VALUES (?,?,?,?,?,?)', uid('bc-'), text, sc, dec, note, cust);
   });
   return { seeded: true };
 }
 
 if (process.argv[1]?.endsWith('seed.ts')) {
-  const r = seed(process.argv.includes('--force'));
+  await initDb();
+  const r = await seed(process.argv.includes('--force'));
   console.log(JSON.stringify(r));
 }
