@@ -65,7 +65,14 @@ docker compose stop           # 停止；数据在 pgdata 卷中保留
 - 换供应商 / 维度：改 `.env` → 若维度变化需在数据库执行 `DROP TABLE knowledge_vectors;` 后重启（表按 `EMBEDDING_DIMS` 重建）→ `POST /api/knowledge/reindex-vectors`（管理员）。
 - 供应商故障：检索自动退回 BM25（trace 第 5 阶段 `mode=bm25`），60 s 后自动重试；无需人工干预。
 
-## 9. 本机开发对照
+## 9. 天猫只读数据接入（CS-018）
+
+- 默认 `TAOBAO_MODE=sandbox`：内置 3 笔样例订单（在线客服「平台订单」Tab 有链接），管理员可在 `POST /api/platform/tmall/simulate {mode}` 注入 `unavailable / auth_expired / rate_limited` 演练执行链降级。
+- 切 live 前置：淘宝开放平台**企业开发者认证**通过 → 创建「自用型」应用取得 `app_key / app_secret` → 申请 API 权限包（交易 `taobao.trade.fullinfo.get`、物流 `taobao.logistics.trace.search`、退款 `taobao.rp.refunds.receive.get`）→ 商家账号完成应用授权取得 `session`（access token，注意有效期与刷新）→ 在开放平台配置服务器出网 IP 白名单。
+- `.env`：`TAOBAO_MODE=live`、`TAOBAO_APP_KEY`、`TAOBAO_APP_SECRET`、`TAOBAO_SESSION`；缺任一项启动即降级为 off 并打印告警，服务不受影响。
+- 排障：`GET /api/platform/status` 看 `ok/detail`（最近一次调用错误）；`auth_expired` → 重新授权刷新 session；`rate_limited` → 降低调用频率或申请更高配额；trace 第 4 阶段证据项 `unavailable=true` 对应 L2 人工确认。
+
+## 10. 本机开发对照
 
 - 不设 `DATABASE_URL` → PGlite 进程内 Postgres，数据在 `data/pglite/`，删除该目录即重置并重新 seed。
 - `DATA_DIR=:memory:` → 纯内存库（单测使用）。

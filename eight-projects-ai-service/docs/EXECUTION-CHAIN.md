@@ -7,7 +7,7 @@
 | 1 | 用户输入 | 规范化文本、统计轮次/机器人已答轮次、取最近 12 条对话窗口、规则识别寒暄/致谢/要求人工/强制转人工关键词 | `GREETING`/`THANKS`/`HUMAN_REQUEST` 正则 + `agent.handoffRules.keywords` | 否 |
 | 2 | 信息补全 | 正则从本轮与历史用户消息抽订单号/运单号/手机/金额/税号；沿用上一轮 trace 的槽位；CRM 补手机号与客户等级。每个槽位记录来源（regex/history/crm/llm/missing） | `completion` 阶段；`Slot.source` | 否 |
 | 3 | 意图/场景识别 | 快模型（thinking 关闭，~1s）在 Agent 启用的场景包中选一个，输出意图、置信度、实体、风险信号（complaint/legal/safety/urgent/vip…）、是否需人工；合并实体到槽位；按场景包标出缺失的必填槽位 | `IntentSchema`（zod）+ `chatJson` 校验重试 | 是（寒暄/致谢除外） |
-| 4 | 证据获取 | 按场景包声明的工具逐个执行（仅当 `requires` 槽位齐全且在 Agent 授权范围内）；记录每次调用的参数/结果/耗时；计算业务证据完整度 | `ToolRegistry.execute`，工具由 API 层注入（订单/物流/发票/退款/差价/CRM/目录） | 否 |
+| 4 | 证据获取 | 按场景包声明的工具并发执行（仅当 `requires` 槽位齐全且在 Agent 授权范围内）；记录每次调用的参数/结果/耗时；计算业务证据完整度。订单/物流/退款工具在本地库未命中且订单号为 16~19 位平台订单时转**电商平台只读数据源**（天猫沙箱 / TOP live，证据项标 `source`、`readOnly`）；平台不可用以 `{ unavailable: true }` 软失败返回并计为证据缺口 | `ToolRegistry.execute`，工具由 API 层注入（订单/物流/发票/退款/差价/CRM/目录）；`PlatformDataSource` | 否 |
 | 5 | 知识/工具调用（检索） | 查询 = 当前问题 + 意图 + 实体；**混合检索**：BM25（中文二元组 + 场景标签加权）与 pgvector 语义检索并行，融合分 = min(1, 词法 + 0.6 × 相似度)；查询向量化前脱敏；供应商不可用退回纯 BM25（detail.mode 记录）；弱命中且开启 `rewriteOnMiss` 时让快模型结合上下文补全省略实体改写 1~3 个查询再检索并合并 | `Retriever.search`（`HybridRetriever` / `BM25Index`）、`RewriteSchema` | 弱命中时是 |
 | 6 | 推理与根因判断 | 推理模型（thinking 开启、`reasoning_effort` 可配）依据证据+知识输出：根因、分析、对客话术、引用（只能引用给出的 `kb:`/`tool:` id）、动作提案、是否需人工、自评置信度；无效引用被剔除并计入风险；必填缺失时强制改为追问 | `ReasonSchema`；引用白名单校验 | 是 |
 | 7 | 风险分级 | 四维信号（意图置信、证据完整度、检索置信、规则确定度）+ 规则：资金/权益动作 ≥L2；投诉/法律/安全 =L3；话术含证据中不存在的金额 L2；声称已完成未执行的动作 L2；售前无知识作答 L2；工具失败 L2；意图置信 <0.5 L2/<0.7 L1；纯追问 L0；**医疗类请求 L2、话术含医疗建议 L3（守卫 `containsMedicalAdvice`）** | `risk` 阶段 | 否 |

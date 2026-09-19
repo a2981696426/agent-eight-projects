@@ -54,6 +54,14 @@
 - **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 含 `postgres`（`pgvector/pgvector:pg16`，healthcheck）与 `ai-service`，读取 `.env`。
 - **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
 
+## 电商平台只读业务数据源（L15，CS-018）
+
+- **契约**：`services/platform-data.ts` 的 `PlatformDataSource { getOrder / getLogistics / getRefunds / health }` 与脱敏 DTO（收件人只保留 `张*` / `138****0001` / `省市区**`，原始手机号与详细地址不进入系统）；`detectPlatformOrder`：16~19 位纯数字视为天猫/淘宝订单（本地演示订单 14 位）。执行链槽位正则同步接受 16~19 位。
+- **两种实现同一契约**：`TmallSandboxSource`（3 笔样例：停滞在途 / 待发货 / 已完成含退款；`simulate(unavailable | auth_expired | rate_limited)`）与 `TmallTopSource`（淘宝开放平台 TOP：`sign_method=md5` 签名、`router/rest` POST、`taobao.trade.fullinfo.get` / `taobao.logistics.trace.search` / `taobao.rp.refunds.receive.get`，`error_response 27/26 → auth_expired`、`7 → rate_limited`，网络错误一次重试；映射器与沙箱共用并以录制样例单测）。`TAOBAO_MODE=off|sandbox|live`，live 缺配置降级为 off 不阻塞启动。
+- **证据接入**：`orders.lookup / logistics.track / refunds.lookup` 在本地库未命中且订单号为平台形态时转平台数据源，证据项 `source: 'tmall-sandbox' | 'tmall-live'`、`readOnly: true`；平台不可用时工具以 `{ unavailable: true, reason }` 软失败返回，pipeline 证据阶段把它计为证据缺口（`ok=false`）→ 完整度 <1 → L2，不自主回复。
+- **接口与工作台**：`GET /api/platform/status`、`POST /api/platform/tmall/simulate`（admin）、`GET /api/platform/tmall/orders/:id`（订单 + 物流 + 退款汇总）；在线客服「客户上下文 → 平台订单」Tab 可按订单号核对（自动从会话消息预填 16~19 位订单号）。
+- **边界**：只读；不作为渠道消息通道（CS-012）；不用平台数据反推访客身份。
+
 ## 自治门禁与医疗边界（L14，CS-015 / ADR-0042 / CS-008B）
 
 - **签发白名单**：`whitelists(scope, version, status, items[{scenario, maxRisk}])`，`draft → signed（售后负责人）→ published（平台管理员，自动停用同 scope 旧版本）→ disabled（即时）`。`services/whitelist.ts` 的 `whitelistFor(channel)` 生成 `ChainContext.whitelist` 钩子：**owned**（web/app/wechat）全时段按 items 判定；**platform**（天猫等）工作时段一律拒绝（辅助模式），非工作时段按 items；无 published 版本默认拒绝。自治阶段 `允许自动 = 白名单允许(场景, 风险) ∧ 风险 ≤ min(Agent, 场景包) ∧ 动作在场景包允许列表`；`autonomy.whitelistVersion` 记入 trace，TraceViewer 显示。Agent 配置里的 `whitelistScenarios` 只在未注入钩子（单测）时作为回退。
