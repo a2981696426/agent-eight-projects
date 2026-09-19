@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { App, Button, Card, Col, Form, Input, InputNumber, Progress, Row, Select, Slider, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Col, Form, Input, InputNumber, Progress, Row, Select, Slider, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { ExperimentOutlined, RocketOutlined, SaveOutlined, UndoOutlined } from '@ant-design/icons';
 import type { AgentConfig, ScenarioPack, Trace } from '@eight/shared';
 import { api, fmtTime, pct, useApi } from '../../api';
@@ -25,8 +25,11 @@ interface BenchRun {
   total: number;
   scenarioAccuracy: number;
   decisionAccuracy: number;
+  medicalBoundaryTotal?: number;
+  medicalBoundaryPass?: number | null;
+  releaseGate?: boolean | null;
   usage: { promptTokens: number; completionTokens: number; calls: number };
-  rows: { caseId: string; text: string; expectedScenario: string; actualScenario: string; scenarioOk: boolean; expectedDecision: string; actualDecision: string; decisionOk: boolean; risk: string; traceId: string; durationMs: number; note: string }[];
+  rows: { caseId: string; category?: string; text: string; expectedScenario: string; actualScenario: string; scenarioOk: boolean; expectedDecision: string; actualDecision: string; decisionOk: boolean; guardOk?: boolean | null; risk: string; traceId: string; durationMs: number; note: string }[];
 }
 
 const AGENT_ID = 'agent-cs-main';
@@ -234,18 +237,24 @@ export default function AgentStudio() {
                       <Tag>v{run.agentVersion} · {fmtTime(run.createdAt)}</Tag>
                       <span>场景准确率 <Progress type="circle" size={40} percent={Math.round(run.scenarioAccuracy * 100)} /></span>
                       <span>决策准确率 <Progress type="circle" size={40} percent={Math.round(run.decisionAccuracy * 100)} /></span>
+                      {run.medicalBoundaryTotal ? (
+                        <Tag className="medical-gate" color={run.releaseGate ? 'green' : 'red'}>医疗边界 {Math.round((run.medicalBoundaryPass ?? 0) * 100)}%（{run.medicalBoundaryTotal} 例）· {run.releaseGate ? '发布门禁通过' : '发布门禁未通过'}</Tag>
+                      ) : null}
                       <Tag>{run.usage.calls} 次调用 · {run.usage.promptTokens + run.usage.completionTokens} tokens</Tag>
                     </>
                   )}
                 </Space>
+                {run && run.releaseGate === false && <Alert type="error" showIcon style={{ marginBottom: 10 }} message="医疗边界用例未全部通过：机器人在这些问法下可能输出医疗建议。发布前必须修正（CS-008B：始终禁止医疗建议）。" />}
                 <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>评测集是冻结的真实问法 + 期望场景 + 期望自治决策；每次评测绑定 Agent 版本，用于比较配置改动是否真的改善（而不是仅看工程测试通过）。</Typography.Paragraph>
                 <Table
                   size="small"
                   rowKey="caseId"
-                  dataSource={run?.rows ?? bench?.cases.map((c) => ({ caseId: c.id, text: c.text, expectedScenario: c.expected_scenario, expectedDecision: c.expected_decision, note: c.note })) ?? []}
+                  dataSource={(run?.rows ?? bench?.cases.map((c) => ({ caseId: c.id, category: (c as { category?: string }).category, text: c.text, expectedScenario: c.expected_scenario, expectedDecision: c.expected_decision, note: c.note })) ?? []) as Record<string, unknown>[]}
                   pagination={false}
                   columns={[
+                    { title: '类别', dataIndex: 'category', width: 90, render: (v) => (v === 'medical_boundary' ? <Tag color="volcano">医疗边界</Tag> : <Tag>业务</Tag>) },
                     { title: '输入', dataIndex: 'text', ellipsis: true },
+                    { title: '守卫', dataIndex: 'guardOk', width: 70, render: (v) => (v == null ? '—' : <Tag color={v ? 'green' : 'red'}>{v ? '通过' : '越界'}</Tag>) },
                     { title: '期望场景', dataIndex: 'expectedScenario', width: 130 },
                     { title: '实际场景', dataIndex: 'actualScenario', width: 130, render: (v, r: any) => v ? <Tag color={r.scenarioOk ? 'green' : 'red'}>{v}</Tag> : '—' },
                     { title: '期望决策', dataIndex: 'expectedDecision', width: 120, render: (v) => <DecisionTag decision={v} /> },

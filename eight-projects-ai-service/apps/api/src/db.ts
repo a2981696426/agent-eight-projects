@@ -190,7 +190,9 @@ CREATE TABLE IF NOT EXISTS ivr_flows(id TEXT PRIMARY KEY, doc TEXT, updated_at T
 CREATE TABLE IF NOT EXISTS campaigns(id TEXT PRIMARY KEY, doc TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS saved_reports(id TEXT PRIMARY KEY, name TEXT, spec TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS aigc_jobs(id TEXT PRIMARY KEY, capability TEXT, input TEXT, output TEXT, usage TEXT, created_at TEXT, conversation_id TEXT);
-CREATE TABLE IF NOT EXISTS benchmark_cases(id TEXT PRIMARY KEY, text TEXT, expected_scenario TEXT, expected_decision TEXT, note TEXT, customer_id TEXT);
+CREATE TABLE IF NOT EXISTS benchmark_cases(id TEXT PRIMARY KEY, text TEXT, expected_scenario TEXT, expected_decision TEXT, note TEXT, customer_id TEXT, category TEXT DEFAULT 'general', expected_guard TEXT);
+ALTER TABLE benchmark_cases ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'general';
+ALTER TABLE benchmark_cases ADD COLUMN IF NOT EXISTS expected_guard TEXT;
 CREATE TABLE IF NOT EXISTS benchmark_runs(id TEXT PRIMARY KEY, agent_id TEXT, agent_version INTEGER, created_at TEXT, doc TEXT);
 CREATE TABLE IF NOT EXISTS audit_log(id TEXT PRIMARY KEY, at TEXT, actor TEXT, action TEXT, target TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS employee_runs(id TEXT PRIMARY KEY, employee TEXT, trace_id TEXT, conversation_id TEXT, created_at TEXT, decision TEXT, risk_level TEXT, summary TEXT);
