@@ -10,7 +10,7 @@ import { initDb, openDb } from './db.ts';
 import { seed } from './seed.ts';
 import { knowledgeIndex, llm, refreshIndex } from './services/chain.ts';
 import { installAuth, seedUsers } from './services/auth.ts';
-import { jobsStatus, startJobs, stopJobs } from './services/jobs.ts';
+import { enqueueEmbed, jobsStatus, startJobs, stopJobs } from './services/jobs.ts';
 import { channelStatus } from './services/channels.ts';
 import { conversationRoutes } from './routes/conversations.ts';
 import { caseRoutes } from './routes/cases.ts';
@@ -106,6 +106,7 @@ if (process.argv[1]?.endsWith('server.ts')) {
   const app = await buildServer();
   await refreshIndex();
   await startJobs();
+  await enqueueEmbed(null); // 补齐缺失向量（异步）
   app.addHook('onClose', async () => stopJobs());
   for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, () => void app.close().then(() => process.exit(0)));
   await app.listen({ port: env.apiPort, host: '0.0.0.0' });

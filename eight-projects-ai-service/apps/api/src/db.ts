@@ -199,13 +199,25 @@ ALTER TABLE traces ADD COLUMN IF NOT EXISTS failed_over INTEGER DEFAULT 0;
 ALTER TABLE traces ADD COLUMN IF NOT EXISTS llm_calls INTEGER DEFAULT 0;
 `;
 
+let vectorReady = false;
+/** pgvector 是否可用（决定混合检索能否启用） */
+export const hasVector = () => vectorReady;
+
 async function migrate(driver: SqlDriver) {
   try {
     await driver.query('CREATE EXTENSION IF NOT EXISTS vector', []);
+    vectorReady = true;
   } catch (e) {
+    vectorReady = false;
     console.warn(`[db] pgvector 不可用，向量检索将不可用：${(e as Error).message}`);
   }
   for (const stmt of SCHEMA.split(';').map((s) => s.trim()).filter(Boolean)) await driver.query(stmt, []);
+  if (vectorReady) {
+    // 知识向量表：维度来自 EMBEDDING_DIMS；换维度需 DROP 后重建并全量重嵌入
+    const dims = Math.max(8, Number(process.env.EMBEDDING_DIMS ?? 1024) || 1024);
+    await driver.query(`CREATE TABLE IF NOT EXISTS knowledge_vectors(chunk_id TEXT PRIMARY KEY, doc_id TEXT, provider TEXT, model TEXT, dims INTEGER, embedding vector(${dims}), updated_at TEXT)`, []);
+    await driver.query('CREATE INDEX IF NOT EXISTS idx_kv_doc ON knowledge_vectors(doc_id)', []);
+  }
 }
 
 export const J = {

@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { chunkText } from '@eight/agent-core';
 import type { KnowledgeDoc } from '@eight/shared';
 import { J, nowIso, openDb, uid, type Db } from '../db.ts';
-import { knowledgeIndex, refreshIndex } from '../services/chain.ts';
+import { knowledgeIndex, refreshIndex, vectorStats, vectorStore } from '../services/chain.ts';
+import { enqueueEmbed } from '../services/jobs.ts';
 import { extractFaq, similarQuestions } from '../services/aigc.ts';
 
 const db = () => openDb();
@@ -36,6 +37,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     published: (await db().get<{ n: number }>("SELECT COUNT(*) n FROM knowledge_docs WHERE status='published'"))?.n ?? 0,
     chunks: await db().count('knowledge_chunks'),
     indexed: knowledgeIndex().size,
+    vectors: await vectorStats(),
     categories: await db().all<{ category: string; n: number }>('SELECT category, COUNT(*) n FROM knowledge_docs GROUP BY category ORDER BY n DESC'),
   }));
   app.get('/api/knowledge/docs/:id', async (req, reply) => {
@@ -64,7 +66,10 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     const contentChanged = b.content !== undefined && b.content !== doc.content;
     await db().run('UPDATE knowledge_docs SET title=?, category=?, tags=?, content=?, version=?, updated_at=?, status=? WHERE id=?', next.title, next.category, J.str(next.tags), next.content, contentChanged ? doc.version + 1 : doc.version, nowIso(), contentChanged ? 'draft' : doc.status, id);
     if (contentChanged || b.tags) await rechunk(db(), id, next.content, next.tags);
-    if (doc.status === 'published') await refreshIndex();
+    if (doc.status === 'published') {
+      await refreshIndex();
+      if (contentChanged || b.tags) await enqueueEmbed(id);
+    }
     return toDoc((await db().get('SELECT * FROM knowledge_docs WHERE id=?', id))!);
   });
   app.post('/api/knowledge/docs/:id/publish', async (req, reply) => {
@@ -73,20 +78,30 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     if (!(await db().get('SELECT id FROM knowledge_docs WHERE id=?', id))) return reply.code(404).send({ error: '文档不存在' });
     await db().run('UPDATE knowledge_docs SET status=?, updated_at=? WHERE id=?', b.action === 'publish' ? 'published' : 'draft', nowIso(), id);
     const indexed = await refreshIndex();
+    if (b.action === 'publish') await enqueueEmbed(id);
+    else if (vectorStore) await vectorStore.deleteDoc(id);
     return { doc: await toDoc((await db().get('SELECT * FROM knowledge_docs WHERE id=?', id))!), indexed };
   });
   app.delete('/api/knowledge/docs/:id', async (req) => {
     const { id } = req.params as { id: string };
     await db().run('DELETE FROM knowledge_chunks WHERE doc_id=?', id);
     await db().run('DELETE FROM knowledge_docs WHERE id=?', id);
+    if (vectorStore) await vectorStore.deleteDoc(id);
     await refreshIndex();
     return { ok: true };
+  });
+  /** 全量重建向量（换供应商/维度后；管理员） */
+  app.post('/api/knowledge/reindex-vectors', async (_req, reply) => {
+    if (!vectorStore) return reply.code(400).send({ error: '未启用向量检索（EMBEDDING_PROVIDER=off 或 pgvector 不可用）' });
+    await db().run('DELETE FROM knowledge_vectors WHERE provider<>? OR model<>?', vectorStore.provider.id, vectorStore.provider.model);
+    const jobId = await enqueueEmbed(null);
+    return { queued: jobId != null, ...(await vectorStats()) };
   });
   /** 检索测试台 */
   app.post('/api/knowledge/search', async (req) => {
     const b = z.object({ q: z.string().min(1).max(500), topK: z.number().int().min(1).max(20).default(6), tags: z.array(z.string()).default([]) }).parse(req.body);
-    const hits = knowledgeIndex().search(b.q, { topK: b.topK, tags: b.tags });
-    return { q: b.q, hits, indexSize: knowledgeIndex().size };
+    const hits = await knowledgeIndex().search(b.q, { topK: b.topK, tags: b.tags });
+    return { q: b.q, hits, indexSize: knowledgeIndex().size, mode: knowledgeIndex().mode };
   });
   /** 批量导入：按 --- 或标题分隔的多篇资料 */
   app.post('/api/knowledge/import', async (req) => {
@@ -102,7 +117,10 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         created.push(id);
       }
     });
-    if (b.publish) await refreshIndex();
+    if (b.publish) {
+      await refreshIndex();
+      await enqueueEmbed(null);
+    }
     return { created: created.length, ids: created };
   });
   app.post('/api/knowledge/faq-extract', async (req) => {
@@ -123,7 +141,10 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         ids.push(id);
       }
     });
-    if (b.publish) await refreshIndex();
+    if (b.publish) {
+      await refreshIndex();
+      await enqueueEmbed(null);
+    }
     reply.code(201);
     return { ids };
   });

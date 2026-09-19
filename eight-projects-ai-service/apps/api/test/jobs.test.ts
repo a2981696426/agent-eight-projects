@@ -55,11 +55,11 @@ after(async () => {
   await closeDb();
 });
 
-test('startJobs 在 PGlite 后端启动并创建两个队列', () => {
+test('startJobs 在 PGlite 后端启动并创建三个队列', () => {
   const s = jobsStatus();
   assert.equal(s.started, true);
   assert.equal(s.backend, 'pglite');
-  assert.deepEqual(s.queues, [QUEUES.inbound, QUEUES.deliver]);
+  assert.deepEqual(s.queues, [QUEUES.inbound, QUEUES.deliver, QUEUES.embed]);
 });
 
 test('enqueueDeliver：worker 投递成功并写 delivery.sent', async () => {

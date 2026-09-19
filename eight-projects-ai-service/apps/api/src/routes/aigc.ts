@@ -43,7 +43,7 @@ export async function aigcRoutes(app: FastifyInstance) {
         const msgs = await loadMessages(conversationId);
         const { knowledgeIndex } = await import('../services/chain.ts');
         const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
-        const hits = lastUser ? knowledgeIndex().search(lastUser.text, { topK: 4 }) : [];
+        const hits = lastUser ? await knowledgeIndex().search(lastUser.text, { topK: 4 }) : [];
         const Schema = z.object({ suggestions: z.array(z.object({ text: z.string(), basis: z.string() })).min(1).max(3) });
         const r = await llm.chatJson(Schema, [
           { role: 'system', content: `${(await loadAgent()).persona}\n根据对话与知识给出 1~3 条可直接发送的应答建议，每条附依据(basis)。不得承诺退款/赔付结果，没有知识支撑的事实不要写。只输出 JSON。` },

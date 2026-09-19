@@ -1,7 +1,9 @@
 import { BM25Index, LlmClient, LlmRouter, MockLlmClient, ToolRegistry, runChain, type ChainContext, type LlmBase } from '@eight/agent-core';
 import type { AgentConfig, Conversation, Customer, KnowledgeChunk, Message, StageRecord, Trace } from '@eight/shared';
-import { J, nowIso, openDb, uid } from '../db.ts';
+import { J, hasVector, nowIso, openDb, uid } from '../db.ts';
 import { env } from '../env.ts';
+import { embeddingFromEnv } from './embeddings.ts';
+import { HybridRetriever, VectorStore } from './retriever.ts';
 import { DEFAULT_AGENT } from '../seed.ts';
 import { createCase } from '../routes/cases.ts';
 import { ensureHandoffTask, windowSentence } from './handoff.ts';
@@ -20,18 +22,42 @@ function buildRouter() {
 }
 export const llm = buildRouter();
 
-/* ───────────── 知识索引（发布态 chunk） ───────────── */
-let index: BM25Index | null = null;
-export function knowledgeIndex() {
-  return (index ??= new BM25Index());
+/* ───────────── 知识索引：BM25（发布态 chunk）+ 向量（pgvector，供应商可用时） ───────────── */
+const bm25 = new BM25Index();
+export const embeddingProvider = embeddingFromEnv();
+export const vectorStore = embeddingProvider && hasVector() ? new VectorStore(embeddingProvider) : null;
+let retriever: HybridRetriever | null = null;
+/** 检索器（混合或纯 BM25）：注入执行链 ChainContext.index */
+export function knowledgeIndex(): HybridRetriever {
+  return (retriever ??= new HybridRetriever(bm25, vectorStore, embeddingProvider));
 }
+/** 重建 BM25；返回已发布块数。向量缺口由 scheduleMissingEmbeddings 补齐（异步） */
 export async function refreshIndex() {
   const rows = await db().all<{ id: string; doc_id: string; seq: number; text: string; tags: string; title: string }>(
     `SELECT c.id, c.doc_id, c.seq, c.text, c.tags, d.title FROM knowledge_chunks c JOIN knowledge_docs d ON d.id=c.doc_id WHERE d.status='published'`,
   );
   const chunks = rows.map((r) => ({ docTitle: r.title, chunk: { id: r.id, docId: r.doc_id, seq: r.seq, text: r.text, tags: J.parse<string[]>(r.tags, []) } as KnowledgeChunk }));
-  knowledgeIndex().rebuild(chunks);
+  bm25.rebuild(chunks);
   return chunks.length;
+}
+/** 为指定文档（或全部缺失块）写入向量；供作业与同步路径调用 */
+export async function embedDoc(docId: string | null): Promise<number> {
+  if (!vectorStore) return 0;
+  const rows = docId
+    ? await db().all<{ id: string; doc_id: string; text: string; title: string }>("SELECT c.id, c.doc_id, c.text, d.title FROM knowledge_chunks c JOIN knowledge_docs d ON d.id=c.doc_id WHERE d.status='published' AND c.doc_id=?", docId)
+    : await (async () => {
+        const missing = await vectorStore.missingPublishedChunkIds();
+        if (!missing.length) return [];
+        return db().all<{ id: string; doc_id: string; text: string; title: string }>(`SELECT c.id, c.doc_id, c.text, d.title FROM knowledge_chunks c JOIN knowledge_docs d ON d.id=c.doc_id WHERE c.id IN (${missing.map(() => '?').join(',')})`, ...missing);
+      })();
+  if (!rows.length) return 0;
+  return vectorStore.upsertChunks(rows.map((r) => ({ id: r.id, docId: r.doc_id, text: r.text, title: r.title })));
+}
+export async function vectorStats() {
+  if (!vectorStore || !embeddingProvider) return { enabled: false as const, provider: null, model: null, count: 0, published: bm25.size, coverage: 0 };
+  const count = await vectorStore.count();
+  const published = bm25.size;
+  return { enabled: true as const, provider: embeddingProvider.id, model: embeddingProvider.model, dims: embeddingProvider.dims, count, published, coverage: published ? Number((Math.min(count, published) / published).toFixed(3)) : 0, mode: knowledgeIndex().mode };
 }
 
 /* ───────────── 业务工具（模拟业务系统，数据来自本库；接真实平台数据源时只替换 run） ───────────── */

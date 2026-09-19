@@ -2,6 +2,7 @@ import { PgBoss, fromPglite } from 'pg-boss';
 import type { InboundMessage } from '@eight/shared';
 import { driverHandle } from '../db.ts';
 import { deliverMessage, ingestInbound } from './channels.ts';
+import { embedDoc } from './chain.ts';
 
 /**
  * 异步作业（CS-013：pg-boss，同库，不引入 Redis）：
@@ -9,11 +10,15 @@ import { deliverMessage, ingestInbound } from './channels.ts';
  * - channel.deliver：出站投递，可重试失败按退避重试，不可重试失败由 deliverMessage 如实写回
  * PGlite（本机/测试）用 fromPglite 共享同一实例；生产用 PostgreSQL 连接串。
  */
-export const QUEUES = { inbound: 'channel.inbound', deliver: 'channel.deliver' } as const;
+export const QUEUES = { inbound: 'channel.inbound', deliver: 'channel.deliver', embed: 'knowledge.embed' } as const;
 
 interface DeliverPayload {
   conversationId: string;
   messageId: string;
+}
+interface EmbedPayload {
+  /** null = 补齐所有缺失块 */
+  docId: string | null;
 }
 
 let boss: PgBoss | null = null;
@@ -33,7 +38,13 @@ export async function startJobs(opts: { pollingIntervalSeconds?: number } = {}):
   await b.start();
   await b.createQueue(QUEUES.inbound, { retryLimit: 3, retryDelay: 5, retryBackoff: true, expireInSeconds: 120 });
   await b.createQueue(QUEUES.deliver, { retryLimit: 5, retryDelay: 5, retryBackoff: true, expireInSeconds: 60 });
+  await b.createQueue(QUEUES.embed, { retryLimit: 3, retryDelay: 10, retryBackoff: true, expireInSeconds: 300 });
   const pollingIntervalSeconds = opts.pollingIntervalSeconds ?? 1;
+
+  await b.work<EmbedPayload>(QUEUES.embed, { pollingIntervalSeconds, batchSize: 1 }, async ([job]) => {
+    const n = await embedDoc(job.data.docId);
+    return { embedded: n };
+  });
 
   await b.work<InboundMessage>(QUEUES.inbound, { pollingIntervalSeconds, batchSize: 5, perJobResults: true }, async (jobs) => {
     return Promise.all(
@@ -92,4 +103,13 @@ export async function enqueueDeliver(conversationId: string, messageId: string, 
 
 export async function jobById(queue: string, id: string) {
   return boss ? boss.getJobById(queue, id) : null;
+}
+
+/** 知识向量化：发布 / 重切块 / 导入后调用；队列未启动时同步执行 */
+export async function enqueueEmbed(docId: string | null): Promise<string | null> {
+  if (!boss) {
+    await embedDoc(docId);
+    return null;
+  }
+  return boss.send(QUEUES.embed, { docId } satisfies EmbedPayload, { singletonKey: `embed:${docId ?? '*'}`, singletonSeconds: 5, retryLimit: 3, retryDelay: 10, retryBackoff: true });
 }
