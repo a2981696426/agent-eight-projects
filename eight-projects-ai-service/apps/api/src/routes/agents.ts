@@ -28,78 +28,78 @@ export async function agentRoutes(app: FastifyInstance) {
     providers: llm.status(),
     events: llm.events.slice(-30).reverse(),
     stats: {
-      degradedTraces: db().get<{ n: number }>('SELECT COUNT(*) n FROM traces WHERE degraded=1')?.n ?? 0,
-      failedOverTraces: db().get<{ n: number }>('SELECT COUNT(*) n FROM traces WHERE failed_over=1')?.n ?? 0,
-      traces: db().count('traces'),
-      avgChainMs: db().get<{ v: number }>('SELECT ROUND(AVG(duration_ms)) v FROM traces')?.v ?? 0,
-      avgChainMsRecent20: db().get<{ v: number }>('SELECT ROUND(AVG(duration_ms)) v FROM (SELECT duration_ms FROM traces ORDER BY created_at DESC LIMIT 20)')?.v ?? 0,
+      degradedTraces: (await db().get<{ n: number }>('SELECT COUNT(*) n FROM traces WHERE degraded=1'))?.n ?? 0,
+      failedOverTraces: (await db().get<{ n: number }>('SELECT COUNT(*) n FROM traces WHERE failed_over=1'))?.n ?? 0,
+      traces: await db().count('traces'),
+      avgChainMs: (await db().get<{ v: number }>('SELECT ROUND(AVG(duration_ms)) v FROM traces'))?.v ?? 0,
+      avgChainMsRecent20: (await db().get<{ v: number }>('SELECT ROUND(AVG(duration_ms)) v FROM (SELECT duration_ms FROM traces ORDER BY created_at DESC LIMIT 20) t'))?.v ?? 0,
     },
   }));
   app.post('/api/llm/simulate', async (req) => {
     const b = z.object({ mode: z.enum(['normal', 'primary_down', 'all_down']) }).parse(req.body);
     const status = llm.simulate(b.mode);
-    db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), 'admin', 'llm.simulate', b.mode, J.str(status));
+    await db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), 'admin', 'llm.simulate', b.mode, J.str(status));
     return { mode: b.mode, providers: status, configured: llm.configured };
   });
 
-  app.get('/api/agents', async () => db().all('SELECT id, name, version, status, updated_at FROM agents ORDER BY updated_at DESC'));
+  app.get('/api/agents', async () => await db().all('SELECT id, name, version, status, updated_at FROM agents ORDER BY updated_at DESC'));
   app.get('/api/agents/meta', async () => ({ scenarios: SCENARIO_PACKS, tools: tools.list(), models: [{ id: 'deepseek-flash', label: 'DeepSeek Flash（快/推理双模式）' }, { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }] }));
   app.get('/api/agents/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const row = db().get<{ doc: string }>('SELECT doc FROM agents WHERE id=?', id);
+    const row = await db().get<{ doc: string }>('SELECT doc FROM agents WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: 'Agent 不存在' });
-    const versions = db().all('SELECT version, published_at, note FROM agent_versions WHERE agent_id=? ORDER BY version DESC', id);
+    const versions = await db().all('SELECT version, published_at, note FROM agent_versions WHERE agent_id=? ORDER BY version DESC', id);
     return { agent: J.parse<AgentConfig>(row.doc, DEFAULT_AGENT), versions };
   });
   /** 保存草稿：不改版本号，状态变为 draft */
   app.put('/api/agents/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const cur = loadAgent(id);
-    if (!db().get('SELECT id FROM agents WHERE id=?', id)) return reply.code(404).send({ error: 'Agent 不存在' });
+    const cur = await loadAgent(id);
+    if (!await db().get('SELECT id FROM agents WHERE id=?', id)) return reply.code(404).send({ error: 'Agent 不存在' });
     const b = AgentBody.parse(req.body);
     const next: AgentConfig = { ...cur, ...b, id, status: 'draft', updatedAt: nowIso() };
-    db().run('UPDATE agents SET name=?, status=?, doc=?, updated_at=? WHERE id=?', next.name, 'draft', J.str(next), next.updatedAt, id);
+    await db().run('UPDATE agents SET name=?, status=?, doc=?, updated_at=? WHERE id=?', next.name, 'draft', J.str(next), next.updatedAt, id);
     return next;
   });
   app.post('/api/agents/:id/publish', async (req, reply) => {
     const { id } = req.params as { id: string };
     const b = z.object({ note: z.string().max(200).default('') }).parse(req.body ?? {});
-    const cur = loadAgent(id);
-    if (!db().get('SELECT id FROM agents WHERE id=?', id)) return reply.code(404).send({ error: 'Agent 不存在' });
+    const cur = await loadAgent(id);
+    if (!await db().get('SELECT id FROM agents WHERE id=?', id)) return reply.code(404).send({ error: 'Agent 不存在' });
     const next: AgentConfig = { ...cur, version: cur.version + 1, status: 'published', updatedAt: nowIso() };
-    db().run('UPDATE agents SET version=?, status=?, doc=?, updated_at=? WHERE id=?', next.version, 'published', J.str(next), next.updatedAt, id);
-    db().run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), id, next.version, J.str(next), next.updatedAt, b.note || `发布 v${next.version}`);
-    db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), 'admin', 'agent.publish', id, J.str({ version: next.version, note: b.note }));
+    await db().run('UPDATE agents SET version=?, status=?, doc=?, updated_at=? WHERE id=?', next.version, 'published', J.str(next), next.updatedAt, id);
+    await db().run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), id, next.version, J.str(next), next.updatedAt, b.note || `发布 v${next.version}`);
+    await db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), 'admin', 'agent.publish', id, J.str({ version: next.version, note: b.note }));
     return next;
   });
   app.post('/api/agents/:id/rollback', async (req, reply) => {
     const { id } = req.params as { id: string };
     const b = z.object({ version: z.number().int().min(1) }).parse(req.body);
-    const v = db().get<{ doc: string }>('SELECT doc FROM agent_versions WHERE agent_id=? AND version=?', id, b.version);
+    const v = await db().get<{ doc: string }>('SELECT doc FROM agent_versions WHERE agent_id=? AND version=?', id, b.version);
     if (!v) return reply.code(404).send({ error: '版本不存在' });
-    const cur = loadAgent(id);
+    const cur = await loadAgent(id);
     const restored = J.parse<AgentConfig>(v.doc, cur);
     const next: AgentConfig = { ...restored, version: cur.version + 1, status: 'published', updatedAt: nowIso() };
-    db().run('UPDATE agents SET version=?, status=?, doc=?, updated_at=? WHERE id=?', next.version, 'published', J.str(next), next.updatedAt, id);
-    db().run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), id, next.version, J.str(next), next.updatedAt, `回滚到 v${b.version}`);
+    await db().run('UPDATE agents SET version=?, status=?, doc=?, updated_at=? WHERE id=?', next.version, 'published', J.str(next), next.updatedAt, id);
+    await db().run('INSERT INTO agent_versions VALUES (?,?,?,?,?,?)', uid('av-'), id, next.version, J.str(next), next.updatedAt, `回滚到 v${b.version}`);
     return next;
   });
   /** 测试台：用当前（草稿）配置试跑一条输入 */
   app.post('/api/agents/:id/test', async (req) => {
     const { id } = req.params as { id: string };
     const b = z.object({ text: z.string().min(1).max(2000), customerId: z.string().nullable().default(null), channel: z.string().default('web') }).parse(req.body);
-    return runStandalone(b.text, { agent: loadAgent(id), customerId: b.customerId, channel: b.channel });
+    return await runStandalone(b.text, { agent: await loadAgent(id), customerId: b.customerId, channel: b.channel });
   });
   /** Benchmark：对内置评测集逐条试跑，比对场景与决策 */
   app.get('/api/agents/:id/benchmarks', async (req) => {
     const { id } = req.params as { id: string };
-    return { cases: db().all('SELECT * FROM benchmark_cases'), runs: db().all<{ id: string; agent_version: number; created_at: string; doc: string }>('SELECT * FROM benchmark_runs WHERE agent_id=? ORDER BY created_at DESC LIMIT 10', id).map((r) => ({ id: r.id, agentVersion: r.agent_version, createdAt: r.created_at, ...J.parse<Record<string, unknown>>(r.doc, {}) })) };
+    return { cases: await db().all('SELECT * FROM benchmark_cases'), runs: (await db().all<{ id: string; agent_version: number; created_at: string; doc: string }>('SELECT * FROM benchmark_runs WHERE agent_id=? ORDER BY created_at DESC LIMIT 10', id)).map((r) => ({ id: r.id, agentVersion: r.agent_version, createdAt: r.created_at, ...J.parse<Record<string, unknown>>(r.doc, {}) })) };
   });
   app.post('/api/agents/:id/benchmarks', async (req) => {
     const { id } = req.params as { id: string };
     const b = z.object({ limit: z.number().int().min(1).max(50).default(10) }).parse(req.body ?? {});
-    const agent = loadAgent(id);
-    const cases = db().all<{ id: string; text: string; expected_scenario: string; expected_decision: string; note: string; customer_id: string | null }>('SELECT * FROM benchmark_cases LIMIT ?', b.limit);
+    const agent = await loadAgent(id);
+    const cases = await db().all<{ id: string; text: string; expected_scenario: string; expected_decision: string; note: string; customer_id: string | null }>('SELECT * FROM benchmark_cases LIMIT ?', b.limit);
     const rows: Record<string, unknown>[] = [];
     let scenarioOk = 0;
     let decisionOk = 0;
@@ -115,7 +115,7 @@ export async function agentRoutes(app: FastifyInstance) {
     }
     const doc = { total: cases.length, scenarioAccuracy: cases.length ? scenarioOk / cases.length : 0, decisionAccuracy: cases.length ? decisionOk / cases.length : 0, usage, rows };
     const runId = uid('br-');
-    db().run('INSERT INTO benchmark_runs VALUES (?,?,?,?,?)', runId, id, agent.version, nowIso(), J.str(doc));
+    await db().run('INSERT INTO benchmark_runs VALUES (?,?,?,?,?)', runId, id, agent.version, nowIso(), J.str(doc));
     return { id: runId, agentVersion: agent.version, createdAt: nowIso(), ...doc };
   });
 }
