@@ -37,7 +37,28 @@ docker compose stop           # 停止；数据在 pgdata 卷中保留
 | 磁盘占用高 | `pgdata` 卷或 `backups/` 增长 | `docker system df`；清理 30 天外备份（脚本已自动）；必要时 `VACUUM` |
 | 忘记 SESSION_SECRET 变更导致全员登出 | Cookie 签名失效 | 预期行为；提醒重新登录 |
 
-## 5. 本机开发对照
+## 5. 微信公众号 / 测试号接入
+
+前置：备案域名 + HTTPS（微信只回调 80/443，服务器地址在腾讯云上需已备案域名；本机联调可用内网穿透到 `/api/channels/wechat/webhook`）。
+
+1. 测试号：`mp.weixin.qq.com/debug/cgi-bin/sandboxinfo` 取 `appID` / `appsecret`；正式服务号在「设置与开发 → 基本配置」。
+2. `.env` 填 `WECHAT_APPID`、`WECHAT_SECRET`、`WECHAT_TOKEN`（自定义 3~32 位）、`WECHAT_AES_KEY`（43 位，安全/兼容模式必填），并把 `WECHAT_MOCK` 改为 `0`；`docker compose up -d --build`。
+3. 微信后台「服务器配置」：URL `https://<域名>/api/channels/wechat/webhook`，Token 与 EncodingAESKey 同 `.env`，消息加解密方式建议「安全模式」→ 提交，微信会 GET 校验（签名正确回 echostr）。
+4. 验证：用手机关注/发消息 → `GET /api/channels/status`（登录后）看 `adapters.wechat.mode=live`、`jobs.started=true`；工作台「在线客服」出现渠道为 `wechat` 的会话，机器人回复经客服消息送达。
+5. 常见错误：`45015` 超出 48 小时互动窗口（用户需再发一条消息）；`45047` 客服消息条数超限；`40001/42001` token 失效（适配器自动重取一次）；签名 403 多为 Token 不一致或时钟偏差。
+6. 切换/回滚（CS-014）：把微信后台服务器地址改回云商即可，10 分钟内；本系统侧无需操作。
+
+## 6. 官网嵌入
+
+页面加 `<script src="https://<域名>/embed.js" data-title="欧态在线客服" data-site="official-site"></script>`；灰度只在部分页面加即可。演示页 `/embed-demo.html`。
+
+## 7. 异步队列（pg-boss）
+
+- 队列：`channel.inbound`、`channel.deliver`；`/api/health` 的 `jobs.started` 应为 `true`。
+- 排查：`SELECT name, state, count(*) FROM pgboss.job GROUP BY 1,2;`（生产 PostgreSQL）；失败任务保留 14 天，`retry` 状态表示等待退避重试。
+- 发送失败不会重试的情况（48 小时窗口过期、被拒绝）会在会话里追加系统消息，坐席可见。
+
+## 8. 本机开发对照
 
 - 不设 `DATABASE_URL` → PGlite 进程内 Postgres，数据在 `data/pglite/`，删除该目录即重置并重新 seed。
 - `DATA_DIR=:memory:` → 纯内存库（单测使用）。

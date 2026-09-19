@@ -31,6 +31,7 @@ Benchmark（同一 10 例）：平均耗时 8825ms → 5399ms，决策准确率 
 - **场景包 = 数字员工**（`packages/agent-core/src/scenarios.ts`）：`logistics` 物流智能体、`invoice` 发票智能体、`refund_price_diff` 退款/差价智能体、`presale` 售前、`complaint` 投诉（自治上限 L0）、`general` 通用。新增一个售后能力 = 新增一个场景包 + 需要的工具。
 - **工具**（`apps/api/src/services/chain.ts`）：当前接的是数据库中的模拟业务数据（订单、物流轨迹、发票、退款、保价核算、CRM、商品目录）。接真实 ERP/WMS/DMS 时只替换工具的 `run`，链与页面不变。
 - **动作工具**（`mutating: true`，如 `cases.create`）只在第 8 阶段被自治门禁放行后执行；退款/补发/开票类动作永远不会自动执行，只形成「待人工确认」的提案。DMS 建单不是执行链工具，只能由坐席在子案件页触发。
+- **渠道入口**：网页访客端直接调 `POST /api/conversations/:id/messages(/stream)`；微信等渠道消息通道经 `ingestInbound` 归一化后进入同一条链——链本身不感知渠道，只有回复的投递方式不同（web 轮询、微信客服消息队列投递）。人工接待中的入站消息不触发执行链（单一响应者）。
 
 ## 会话落库规则（`runForConversation`）
 

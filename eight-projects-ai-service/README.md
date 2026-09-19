@@ -45,9 +45,10 @@ docker compose up -d --build
 ```bash
 pnpm typecheck   # 全部包
 pnpm test        # agent-core 单测 12 条（不联网；含模型路由重试/熔断/降级）
-pnpm --filter @eight/api test   # API 单测 26 条（PGlite 内存库：数据层、工作日历与接续任务、DMS 模拟、cases/handoffs 接口 inject）
+pnpm --filter @eight/api test   # API 单测 45 条（PGlite 内存库：数据层、接续任务、DMS 模拟、cases 接口、渠道契约、pg-boss 队列、微信 Webhook）
+pnpm load:smoke / load:peak    # k6 压测（先起 LLM_MOCK=1 的 8788 实例，见 load/README.md 与 docs/LOAD-TEST.md）
 pnpm build       # 生产构建
-pnpm e2e         # Playwright（需 dev 服务已启动、系统 Chrome）；40 条用例，含真实模型业务流、故障演练、权限与子案件/接续任务/DMS 流，断言 0 控制台错误
+pnpm e2e         # Playwright（需 dev 服务已启动、系统 Chrome）；41 条用例，含真实模型业务流、故障演练、权限、子案件/接续任务/DMS 流与官网嵌入，断言 0 控制台错误
 ```
 
 ## 目录
@@ -72,4 +73,4 @@ scripts             备份/恢复数据库、拆仓库
 
 ## 文档
 
-- [架构说明](docs/ARCHITECTURE.md) · [执行链](docs/EXECUTION-CHAIN.md) · [运行手册](docs/RUNBOOK.md) · [调研与借鉴分析](docs/RESEARCH-2026-09-18.md) · [Loop Engineering 记录](docs/LOOP-LOG.md) · [实施计划](docs/plans/) · [拆仓库](docs/EXTRACT-TO-NEW-REPO.md)
+- [架构说明](docs/ARCHITECTURE.md) · [执行链](docs/EXECUTION-CHAIN.md) · [运行手册](docs/RUNBOOK.md) · [压测记录](docs/LOAD-TEST.md) · [调研与借鉴分析](docs/RESEARCH-2026-09-18.md) · [Loop Engineering 记录](docs/LOOP-LOG.md) · [实施计划](docs/plans/) · [拆仓库](docs/EXTRACT-TO-NEW-REPO.md)
