@@ -1,6 +1,7 @@
 export { LlmClient, LlmRouter, MockLlmClient, LlmBase, LlmError, safeParseJson, sumUsage } from './llm.js';
 export type { LlmConfig, LlmLike, ChatMessage, ChatOptions, ChatResult, ProviderStatus, RouterOptions } from './llm.js';
 export { BM25Index, tokenize, chunkText } from './retrieval.js';
+export type { Retriever } from './retrieval.js';
 export { ToolRegistry } from './tools.js';
 export type { ToolDefinition, ToolContext } from './tools.js';
 export { SCENARIO_PACKS, scenarioById } from './scenarios.js';

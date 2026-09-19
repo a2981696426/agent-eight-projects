@@ -121,8 +121,12 @@ export interface KnowledgeHit {
   docId: string;
   docTitle: string;
   text: string;
+  /** 融合分 0～1（纯 BM25 时等于词法分） */
   score: number;
   tags: string[];
+  /** 混合检索的分量：词法（BM25 归一化）与语义（余弦相似度） */
+  lexical?: number;
+  semantic?: number;
 }
 
 export interface Citation {

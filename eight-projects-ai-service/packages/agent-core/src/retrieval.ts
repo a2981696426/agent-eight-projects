@@ -19,6 +19,13 @@ export function tokenize(text: string): string[] {
   return tokens;
 }
 
+/** 检索器契约：BM25Index 与宿主的混合检索器都实现它；search 可同步或异步 */
+export interface Retriever {
+  readonly size: number;
+  readonly mode?: 'bm25' | 'hybrid';
+  search(query: string, opts?: { topK?: number; tags?: string[]; minScore?: number }): KnowledgeHit[] | Promise<KnowledgeHit[]>;
+}
+
 interface IndexedChunk {
   chunk: KnowledgeChunk;
   docTitle: string;
@@ -26,7 +33,8 @@ interface IndexedChunk {
   len: number;
 }
 
-export class BM25Index {
+export class BM25Index implements Retriever {
+  readonly mode = 'bm25' as const;
   private docs: IndexedChunk[] = [];
   private df = new Map<string, number>();
   private avgLen = 1;
@@ -81,7 +89,7 @@ export class BM25Index {
       // 标签软加权：场景包标签命中 +15%
       if (opts.tags?.length && d.chunk.tags.some((t) => opts.tags!.includes(t))) score *= 1.15;
       const norm = Math.min(1, score / denom);
-      results.push({ id: `kb:${d.chunk.id}`, chunkId: d.chunk.id, docId: d.chunk.docId, docTitle: d.docTitle, text: d.chunk.text, score: Number(norm.toFixed(4)), tags: d.chunk.tags });
+      results.push({ id: `kb:${d.chunk.id}`, chunkId: d.chunk.id, docId: d.chunk.docId, docTitle: d.docTitle, text: d.chunk.text, score: Number(norm.toFixed(4)), tags: d.chunk.tags, lexical: Number(norm.toFixed(4)) });
     }
     results.sort((a, b) => b.score - a.score);
     const min = opts.minScore ?? 0;

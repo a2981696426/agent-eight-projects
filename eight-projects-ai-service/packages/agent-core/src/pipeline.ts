@@ -20,14 +20,15 @@ import type {
 } from '@eight/shared';
 import { STAGE_LABELS } from '@eight/shared';
 import { LlmError, sumUsage, type LlmLike } from './llm.js';
-import { BM25Index } from './retrieval.js';
+import { BM25Index, type Retriever } from './retrieval.js';
 import { ToolRegistry } from './tools.js';
 import { SCENARIO_PACKS, scenarioById } from './scenarios.js';
 
 export interface ChainContext {
   llm: LlmLike;
   tools: ToolRegistry;
-  index: BM25Index;
+  /** 检索器：BM25Index 或宿主的混合检索器（search 可异步） */
+  index: Retriever;
   agent: AgentConfig;
   conversation: { id: string; customerId: string | null; channel: string; messages: Message[] };
   customer: Customer | null;
@@ -366,7 +367,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     const entityText = [...completion.values()].filter((s) => s.value && ['product', 'invoiceTitle'].includes(s.key)).map((s) => s.value).join(' ');
     const query = [intake.text, intent.out.intent, entityText].filter(Boolean).join(' ');
     const { topK, minScore, rewriteOnMiss } = agent.retrieval;
-    let hits: KnowledgeHit[] = ctx.index.search(query, { topK, tags: pack.knowledgeTags });
+    let hits: KnowledgeHit[] = await ctx.index.search(query, { topK, tags: pack.knowledgeTags });
     let rewritten: string[] | null = null;
     let llm: LlmUsage[] = [];
     const weak = !hits.length || hits[0].score < minScore;
@@ -385,7 +386,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
         rewritten = r.value.queries;
         llm = r.usage;
         const merged = new Map<string, KnowledgeHit>(hits.map((h) => [h.id, h]));
-        for (const q of rewritten) for (const h of ctx.index.search(q, { topK, tags: pack.knowledgeTags })) if (!merged.has(h.id) || merged.get(h.id)!.score < h.score) merged.set(h.id, h);
+        for (const q of rewritten) for (const h of await ctx.index.search(q, { topK, tags: pack.knowledgeTags })) if (!merged.has(h.id) || merged.get(h.id)!.score < h.score) merged.set(h.id, h);
         hits = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, topK);
       } catch (e) {
         if (!(e instanceof LlmError)) throw e;
@@ -397,7 +398,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     trace.knowledge = kept;
     return {
       summary: kept.length ? `召回 ${kept.length} 条知识，最高分 ${retrievalConfidence.toFixed(2)}${rewritten ? `（首轮弱命中，改写后重检：${rewritten.join(' | ')}）` : ''}` : `未召回可用知识${rewritten ? `（已尝试改写：${rewritten.join(' | ')}）` : ''}`,
-      detail: { query, rewritten, hits: kept, retrievalConfidence, indexSize: ctx.index.size },
+      detail: { query, rewritten, hits: kept, retrievalConfidence, indexSize: ctx.index.size, mode: ctx.index.mode ?? 'bm25' },
       value: { hits: kept, retrievalConfidence, rewritten },
       llm,
     };
