@@ -31,7 +31,7 @@ export default function Dashboard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <div>
           <div style={{ fontSize: 22, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>欧态智能服务 · 实时运营大屏</div>
-          <div className="sub">数据来源：本平台会话 / 执行链 / 工单 / 质检（15 秒自动刷新）· 更新 {fmtTime(data?.generatedAt)}</div>
+          <div className="sub">数据来源：本平台会话 / 执行链 / 子案件与接续任务 / 质检（15 秒自动刷新）· 更新 {fmtTime(data?.generatedAt)}</div>
         </div>
         <div>
           <Button ghost icon={<ReloadOutlined />} loading={loading} onClick={() => void reload()} style={{ marginRight: 8 }}>刷新</Button>
@@ -43,7 +43,7 @@ export default function Dashboard() {
         <Col xs={12} md={6} xl={3}>{tile('待人工接续', k.waitingHuman, '按 P0 > P1 > P2 排队')}</Col>
         <Col xs={12} md={6} xl={3}>{tile('机器人自主解决率', pct(k.autoReplyRate), '执行链 auto_reply 占比')}</Col>
         <Col xs={12} md={6} xl={3}>{tile('执行链平均耗时', `${k.avgChainMs ?? 0} ms`, '含 2 次模型调用')}</Col>
-        <Col xs={12} md={6} xl={3}>{tile('处理中工单', k.openTickets, `SLA 超时 ${k.overdueTickets ?? 0}`)}</Col>
+        <Col xs={12} md={6} xl={3}>{tile('待接续任务', k.pendingHandoffs, `超时 ${k.overdueHandoffs ?? 0} · 子案件 ${k.openCases ?? 0}`)}</Col>
         <Col xs={12} md={6} xl={3}>{tile('质检平均分', k.qualityAvg, '规则 + 语义')}</Col>
         <Col xs={12} md={6} xl={3}>{tile('满意度', k.avgSatisfaction, '5 分制')}</Col>
         <Col xs={12} md={6} xl={3}>{tile('近 200 次 tokens', k.tokensRecent, `在线坐席 ${k.agentsOnline ?? 0} · 机器人 ${k.botOnline ?? 0}`)}</Col>

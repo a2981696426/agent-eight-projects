@@ -197,9 +197,9 @@ export async function conversationRoutes(app: FastifyInstance) {
     const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
     const lastTrace = await db().get<{ id: string; doc: string }>('SELECT id, doc FROM traces WHERE conversation_id=? ORDER BY created_at DESC LIMIT 1', id);
-    const traceDoc = lastTrace ? J.parse<{ slots?: { key: string; value: string | null; source: string }[]; evidence?: { items?: { tool: string; ok: boolean; summary?: string }[] }; reply?: { candidate?: string | null } }>(lastTrace.doc, {}) : {};
+    const traceDoc = lastTrace ? J.parse<{ slots?: { key: string; value: string | null; source: string }[]; evidence?: { tool: string; label?: string; ok: boolean }[]; reply?: { candidate?: string | null } }>(lastTrace.doc, {}) : {};
     const slots = Object.fromEntries((traceDoc.slots ?? []).filter((s) => s.value && s.source !== 'missing').map((s) => [s.key, String(s.value)]));
-    const facts = (traceDoc.evidence?.items ?? []).filter((i) => i.ok).map((i) => ({ tool: i.tool, summary: i.summary ?? '' }));
+    const facts = (traceDoc.evidence ?? []).filter((i) => i.ok).map((i) => ({ tool: i.tool, summary: i.label ?? i.tool }));
     const c = await createCase(db(), { ...parsed, conversationId: id, customerId: String(row.customer_id), evidence: { slots, facts, traceIds: lastTrace ? [lastTrace.id] : [], candidateReply: traceDoc.reply?.candidate ?? null }, source: 'agent', actor });
     await appendMessage(id, 'system', `【已拆出子案件 ${c.id}】${c.title}`, { meta: { internal: true, caseId: c.id } });
     await audit(actor, 'case.create', c.id, { conversationId: id });

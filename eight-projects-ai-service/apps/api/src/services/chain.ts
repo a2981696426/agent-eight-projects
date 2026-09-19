@@ -271,7 +271,7 @@ export async function runForConversation(conversationId: string, text: string, o
         reason: trace.autonomy?.reasons.join('；') ?? '执行链转人工',
         progress: {
           doneStages: trace.stages.filter((s) => s.status === 'ok').map((s) => s.id),
-          evidence: trace.evidence?.items.filter((i) => i.ok).map((i) => i.id) ?? [],
+          evidence: (trace.evidence ?? []).filter((i) => i.ok).map((i) => i.id),
           missing: trace.slots.filter((s) => s.source === 'missing').map((s) => s.key),
           candidate: reply.candidate ?? null,
           failure: trace.degraded ? `规则降级：${trace.degradedReason ?? '模型不可用'}` : null,

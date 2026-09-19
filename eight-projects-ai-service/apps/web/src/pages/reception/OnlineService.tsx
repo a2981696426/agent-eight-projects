@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { App, Badge, Button, Descriptions, Drawer, Empty, Form, Input, Modal, Segmented, Select, Space, Tabs, Tag, Tooltip, Typography } from 'antd';
 import { BulbOutlined, EyeOutlined, FileTextOutlined, RobotOutlined, SendOutlined, SolutionOutlined, SwapOutlined, TagsOutlined, UserSwitchOutlined } from '@ant-design/icons';
-import type { Conversation, Customer, Message, Trace } from '@eight/shared';
+import type { Conversation, Customer, HandoffTask, Message, SubCase, Trace } from '@eight/shared';
 import { api, fmtShort, fmtTime, useApi } from '../../api';
 import TraceViewer, { DecisionTag, RiskTag } from '../../components/TraceViewer';
 
@@ -11,25 +12,30 @@ interface Detail {
   customer: Customer | null;
   orders: { id: string; product: string; status: string; paid_amount: number; created_at: string }[];
   traces: { id: string; created_at: string; scenario: string; intent: string; decision: string; risk_level: string; duration_ms: number }[];
-  tickets: { id: string; title: string; status: string; priority: string }[];
+  cases: SubCase[];
+  handoffTask: HandoffTask | null;
 }
 
 const statusMeta: Record<string, { text: string; color: string }> = { waiting_human: { text: '待接入', color: 'red' }, open: { text: '进行中', color: 'green' }, closed: { text: '已结束', color: 'default' } };
+const caseStatusText: Record<SubCase['status'], string> = { pending_human: '待人工', in_progress: '处理中', linked_dms: '已关联 DMS', archived: '已归档' };
 
 export default function OnlineService() {
   const { message, modal } = App.useApp();
+  const nav = useNavigate();
+  const [params] = useSearchParams();
   const [filter, setFilter] = useState<string>('all');
   const listPath = filter === 'all' ? '/api/conversations' : `/api/conversations?status=${filter}`;
   const { data: list, reload } = useApi<Conversation[]>(listPath, { pollMs: 8000 });
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // 支持从接续任务 / 子案件页以 ?conv=<id> 跳入并直接选中该会话
+  const [activeId, setActiveId] = useState<string | null>(params.get('conv'));
   const [detail, setDetail] = useState<Detail | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [assist, setAssist] = useState<Trace | null>(null);
   const [assistLoading, setAssistLoading] = useState(false);
   const [traceOpen, setTraceOpen] = useState<Trace | null>(null);
-  const [ticketOpen, setTicketOpen] = useState(false);
-  const [ticketForm] = Form.useForm();
+  const [caseOpen, setCaseOpen] = useState(false);
+  const [caseForm] = Form.useForm();
   const [summary, setSummary] = useState<{ problem: string; handling: string; outcome: string; followUp: string; tags: string[] } | null>(null);
   const [classification, setClassification] = useState<{ level1: string; level2: string; level3: string; emotion: string; urgency: string } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -113,22 +119,22 @@ export default function OnlineService() {
       message.error((e as Error).message);
     }
   }
-  async function openTicketFromAi() {
+  async function openCaseFromAi() {
     if (!conv) return;
     try {
       const t = await api<{ title: string; type: string; priority: string; description: string }>('/api/aigc/ticket-extract', { method: 'POST', body: { conversationId: conv.id } });
-      ticketForm.setFieldsValue(t);
-      setTicketOpen(true);
+      caseForm.setFieldsValue(t);
+      setCaseOpen(true);
     } catch (e) {
       message.error((e as Error).message);
     }
   }
-  async function createTicket() {
+  async function createCase() {
     if (!conv) return;
-    const v = await ticketForm.validateFields();
-    await api(`/api/conversations/${conv.id}/ticket`, { method: 'POST', body: { ...v, actor: '客服小欧' } });
-    setTicketOpen(false);
-    message.success('工单已创建');
+    const v = await caseForm.validateFields();
+    await api(`/api/conversations/${conv.id}/case`, { method: 'POST', body: { ...v, actor: '客服小欧' } });
+    setCaseOpen(false);
+    message.success('已拆出子案件；正式 DMS 工单请在「工单协作」页关联');
     await loadDetail(conv.id);
   }
 
@@ -137,7 +143,7 @@ export default function OnlineService() {
       <div className="page-head">
         <div>
           <h2>在线客服 · 坐席工作台</h2>
-          <div className="desc">会话列表 · 聊天主区 · 客户上下文三栏。机器人前置接待，触发风险或用户要求时转入人工队列；坐席可一键获取 AI 应答建议、会话小记、智能分类与工单。</div>
+          <div className="desc">会话列表 · 聊天主区 · 客户上下文三栏。机器人前置接待，触发风险或用户要求时转入人工队列；坐席可一键获取 AI 应答建议、会话小记、智能分类，并拆出子案件；正式售后工单在 DMS。</div>
         </div>
         <Segmented value={filter} onChange={(v) => setFilter(v as string)} options={[{ label: '全部', value: 'all' }, { label: <Badge count={waitingCount} size="small" offset={[8, 0]}>待接入</Badge>, value: 'waiting_human' }, { label: '进行中', value: 'open' }, { label: '已结束', value: 'closed' }]} />
       </div>
@@ -189,6 +195,18 @@ export default function OnlineService() {
               </Space>
             )}
           </div>
+          {detail?.handoffTask && (
+            <div className="handoff-banner" style={{ background: detail.handoffTask.status === 'pending' ? '#fff1f0' : '#f6ffed', borderBottom: '1px solid #f0f0f0', padding: '6px 10px', fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Space size={6} wrap>
+                <Tag color={detail.handoffTask.priority === 'P0' ? 'red' : detail.handoffTask.priority === 'P1' ? 'orange' : 'default'}>{detail.handoffTask.priority}</Tag>
+                <span>接续任务 <span className="mono">{detail.handoffTask.id}</span> · {detail.handoffTask.status === 'pending' ? '待接续' : `接续中 · ${detail.handoffTask.claimedBy}`}</span>
+                <span style={{ color: '#6b7280' }}>{detail.handoffTask.windowText} · 目标 {fmtShort(detail.handoffTask.dueAt)}</span>
+              </Space>
+              {detail.handoffTask.status === 'pending' && (
+                <Button size="small" type="primary" onClick={() => api(`/api/handoffs/${detail.handoffTask!.id}/claim`, { method: 'POST' }).then(() => loadDetail(detail.conversation.id)).then(() => reload()).then(() => message.success('已认领并接管会话')).catch((e) => message.error((e as Error).message))}>认领并接管</Button>
+              )}
+            </div>
+          )}
           <div className="col-body" ref={scroller} style={{ background: '#fafbfd' }}>
             <div className="chat">
               {detail?.messages.map((m) => (
@@ -229,7 +247,7 @@ export default function OnlineService() {
                 <Tooltip title="用执行链重新分析最后一条用户消息，生成带依据的建议"><Button size="small" icon={<BulbOutlined />} loading={assistLoading} onClick={runAssist}>AI 建议</Button></Tooltip>
                 <Button size="small" icon={<FileTextOutlined />} onClick={genSummary}>会话小记</Button>
                 <Button size="small" icon={<TagsOutlined />} onClick={genClassify}>智能分类</Button>
-                <Button size="small" icon={<SolutionOutlined />} onClick={openTicketFromAi}>生成工单</Button>
+                <Button size="small" icon={<SolutionOutlined />} onClick={openCaseFromAi}>生成子案件</Button>
               </Space>
               <Space size={4}>
                 <Button size="small" onClick={() => send('user')} disabled={!draft.trim() || busy}>模拟访客发送</Button>
@@ -292,7 +310,17 @@ export default function OnlineService() {
                       </div>
                     )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无执行记录" />,
                   },
-                  { key: 'k', label: `工单 ${detail.tickets.length}`, children: detail.tickets.length ? detail.tickets.map((t) => <div key={t.id} style={{ fontSize: 12, padding: '6px 0', borderBottom: '1px dashed #eee' }}><span className="mono">{t.id}</span> {t.title} <Tag>{t.status}</Tag><Tag>{t.priority}</Tag></div>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无关联工单" /> },
+                  {
+                    key: 'k',
+                    label: `子案件 ${detail.cases.length}`,
+                    children: detail.cases.length ? detail.cases.map((c) => (
+                      <div key={c.id} style={{ fontSize: 12, padding: '6px 0', borderBottom: '1px dashed #eee', cursor: 'pointer' }} onClick={() => nav('/reception/cases')}>
+                        <span className="mono">{c.id}</span> {c.title} <Tag>{caseStatusText[c.status]}</Tag><Tag>{c.priority}</Tag>
+                        {c.dms.ticketNo && <Tag color="green">DMS {c.dms.ticketNo}</Tag>}
+                        {c.dms.pending && <Tag color="orange">待同步</Tag>}
+                      </div>
+                    )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无子案件；正式售后工单在 DMS" />,
+                  },
                 ]}
               />
             ) : (
@@ -304,8 +332,8 @@ export default function OnlineService() {
       <Drawer open={!!traceOpen} onClose={() => setTraceOpen(null)} width={720} title="执行链轨迹">
         <TraceViewer trace={traceOpen} />
       </Drawer>
-      <Modal open={ticketOpen} onCancel={() => setTicketOpen(false)} onOk={createTicket} title="从会话创建工单（AI 已预填）" okText="创建">
-        <Form form={ticketForm} layout="vertical">
+      <Modal open={caseOpen} onCancel={() => setCaseOpen(false)} onOk={createCase} title="从会话拆出子案件（AI 已预填）" okText="创建">
+        <Form form={caseForm} layout="vertical">
           <Form.Item name="title" label="标题" rules={[{ required: true }]}><Input /></Form.Item>
           <Space>
             <Form.Item name="type" label="类型"><Select style={{ width: 140 }} options={['物流', '发票', '退款', '投诉', '售前', '其他'].map((v) => ({ value: v }))} /></Form.Item>

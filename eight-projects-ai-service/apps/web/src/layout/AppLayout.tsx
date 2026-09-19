@@ -35,7 +35,7 @@ export const NAV: { group: string; items: { key: string; label: string; icon: Re
       { key: '/reception/online', label: '在线客服', icon: <CustomerServiceOutlined /> },
       { key: '/reception/call-center', label: '呼叫中心', icon: <PhoneOutlined />, deferred: true },
       { key: '/reception/video', label: '视频客服', icon: <VideoCameraOutlined />, deferred: true },
-      { key: '/reception/tickets', label: '工单系统', icon: <SolutionOutlined /> },
+      { key: '/reception/cases', label: '工单协作', icon: <SolutionOutlined /> },
     ],
   },
   {

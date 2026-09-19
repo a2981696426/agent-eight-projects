@@ -38,7 +38,7 @@ export default function Aigc() {
       <div className="page-head">
         <div>
           <h2>AIGC 应用</h2>
-          <div className="desc">把大模型能力融入知识构建、坐席服务与客户洞察：会话小记、五级分类、工单生成、应答建议、话术润色、文档抽取问答、相似问生成。所有生成结果都是「候选」，需人工采纳。</div>
+          <div className="desc">把大模型能力融入知识构建、坐席服务与客户洞察：会话小记、五级分类、子案件生成、应答建议、话术润色、文档抽取问答、相似问生成。所有生成结果都是「候选」，需人工采纳。</div>
         </div>
       </div>
       <Row gutter={[12, 12]}>

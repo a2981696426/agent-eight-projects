@@ -3,7 +3,7 @@ import { Spin } from 'antd';
 import AppLayout from './layout/AppLayout';
 import Overview from './pages/Overview';
 import OnlineService from './pages/reception/OnlineService';
-import Tickets from './pages/reception/Tickets';
+import Cases from './pages/reception/Cases';
 import Deferred from './pages/reception/Deferred';
 import OnlineRobot from './pages/ai/OnlineRobot';
 import InboundRobot from './pages/ai/InboundRobot';
@@ -43,7 +43,7 @@ export default function App() {
           <Route path="/reception/online" element={<OnlineService />} />
           <Route path="/reception/call-center" element={<Deferred title="呼叫中心" desc="安全稳定更贴心的云呼叫系统" />} />
           <Route path="/reception/video" element={<Deferred title="视频客服" desc="多渠道、面对面实时在线沟通" />} />
-          <Route path="/reception/tickets" element={<Tickets />} />
+          <Route path="/reception/cases" element={<Cases />} />
           <Route path="/ai/online-robot" element={<OnlineRobot />} />
           <Route path="/ai/inbound-robot" element={<InboundRobot />} />
           <Route path="/ai/outbound" element={<Outbound />} />

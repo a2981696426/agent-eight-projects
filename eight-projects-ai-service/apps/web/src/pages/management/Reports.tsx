@@ -5,7 +5,7 @@ import type { ReportResult, ReportSpec } from '@eight/shared';
 import { api, fmtTime, useApi } from '../../api';
 
 interface Options { datasets: { id: string; dimensions: { id: string; label: string }[]; metrics: { id: string; label: string }[] }[]; saved: { id: string; name: string; spec: ReportSpec; created_at: string }[] }
-const DS_LABEL: Record<string, string> = { conversations: '会话', tickets: '工单', traces: '执行链', quality: '质检' };
+const DS_LABEL: Record<string, string> = { conversations: '会话', cases: '子案件', traces: '执行链', quality: '质检' };
 
 export default function Reports() {
   const { message } = App.useApp();

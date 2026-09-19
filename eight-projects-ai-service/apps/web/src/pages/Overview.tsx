@@ -7,7 +7,8 @@ import { NAV } from '../layout/AppLayout';
 interface OverviewData {
   conversations: number;
   waitingHuman: number;
-  tickets: number;
+  cases: number;
+  handoffsPending: number;
   traces: number;
   knowledge: number;
   quality: number;
@@ -20,7 +21,8 @@ export default function Overview() {
   const kpis = [
     ['会话总数', data?.conversations],
     ['待人工接续', data?.waitingHuman],
-    ['处理中工单', data?.tickets],
+    ['待处理子案件', data?.cases],
+    ['待接续任务', data?.handoffsPending],
     ['执行链运行次数', data?.traces],
     ['已发布知识', data?.knowledge],
     ['质检记录', data?.quality],

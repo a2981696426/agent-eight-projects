@@ -2,8 +2,8 @@ import { Card, Descriptions, Result, Tag } from 'antd';
 
 export default function Deferred({ title, desc }: { title: string; desc: string }) {
   const plan: Record<string, { deps: string[]; reuse: string[] }> = {
-    呼叫中心: { deps: ['SIP/云呼叫线路与号码资源', 'ASR/TTS 引擎', '坐席软电话与录音存储'], reuse: ['呼入机器人 IVR 流程与执行链', '工单系统', '智能质检（通话文本）'] },
-    视频客服: { deps: ['WebRTC 信令与媒体服务', '屏幕共享/远程标注', '录制合规存储'], reuse: ['在线客服工作台三栏布局', '会话小记与工单生成', '客户 360'] },
+    呼叫中心: { deps: ['SIP/云呼叫线路与号码资源', 'ASR/TTS 引擎', '坐席软电话与录音存储'], reuse: ['呼入机器人 IVR 流程与执行链', '子案件与 DMS 关联', '智能质检（通话文本）'] },
+    视频客服: { deps: ['WebRTC 信令与媒体服务', '屏幕共享/远程标注', '录制合规存储'], reuse: ['在线客服工作台三栏布局', '会话小记与子案件生成', '客户 360'] },
   };
   const p = plan[title] ?? { deps: [], reuse: [] };
   return (
