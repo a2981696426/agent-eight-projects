@@ -229,7 +229,8 @@ export interface Trace {
    * text：实际对客发送的文本（自主回复 = 候选话术；人工确认 = 等待人工核实提示；升级 = 转接话术）
    * candidate：推理阶段生成的候选话术，供坐席审核采用；自主回复时与 text 相同
    */
-  reply: { text: string; candidate: string; internalNote: string; kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff' } | null;
+  /** kind=boundary：医疗边界固定文案（不含模型生成内容） */
+  reply: { text: string; candidate: string; internalNote: string; kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff' | 'boundary' } | null;
   stages: StageRecord[];
   totalDurationMs: number;
   usage: { promptTokens: number; completionTokens: number; calls: number };

@@ -6,4 +6,5 @@ export { ToolRegistry } from './tools.js';
 export type { ToolDefinition, ToolContext } from './tools.js';
 export { SCENARIO_PACKS, scenarioById } from './scenarios.js';
 export { runChain } from './pipeline.js';
+export { MEDICAL_BOUNDARY_TEXT, MEDICAL_EMERGENCY_TEXT, containsMedicalAdvice, detectMedicalRequest } from './medical.js';
 export type { ChainContext } from './pipeline.js';

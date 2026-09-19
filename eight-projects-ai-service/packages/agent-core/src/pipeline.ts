@@ -21,6 +21,7 @@ import type {
 } from '@eight/shared';
 import { STAGE_LABELS } from '@eight/shared';
 import { LlmError, sumUsage, type LlmLike } from './llm.js';
+import { MEDICAL_BOUNDARY_TEXT, MEDICAL_EMERGENCY_TEXT, containsMedicalAdvice, detectMedicalRequest } from './medical.js';
 import { BM25Index, type Retriever } from './retrieval.js';
 import { ToolRegistry } from './tools.js';
 import { SCENARIO_PACKS, scenarioById } from './scenarios.js';
@@ -305,6 +306,10 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       if (!out.flags.includes('request_human')) out.flags.push('request_human');
     }
     if (ctx.customer?.level && ctx.customer.level !== 'normal' && !out.flags.includes('vip')) out.flags.push('vip');
+    // 医疗边界（CS-008B/E）：识别用药/剂量/诊断类请求；紧急症状同时打 safety（→ L3 / P0）
+    const med = detectMedicalRequest(intake.text);
+    if (med.medical && !out.flags.includes('medical')) out.flags.push('medical');
+    if (med.emergency && !out.flags.includes('safety')) out.flags.push('safety');
     for (const [k, v] of Object.entries(out.entities ?? {})) {
       if (v && !completion.has(k)) completion.set(k, { key: k, label: SLOT_LABELS[k] ?? k, value: v, source: 'llm', required: false });
     }
@@ -530,6 +535,12 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     if (['refund', 'price_difference_refund', 'reship', 'invoice_reissue'].includes(action)) bump('L2', `动作 ${action} 涉及权益/资金变更`);
     if (action === 'handoff') bump('L2', '提案转人工');
     if (flags.some((f) => ['complaint', 'legal', 'safety'].includes(f))) bump('L3', '投诉/法律/安全类信号');
+    if (flags.includes('medical')) bump('L2', '医疗类请求：机器人不得提供建议，只发送边界文案');
+    const adviceGuard = containsMedicalAdvice(draft);
+    if (adviceGuard.advice) {
+      flags.push('medical_advice_in_draft');
+      bump('L3', `话术含医疗建议「${adviceGuard.hits[0]}」，已拦截并替换为边界文案`);
+    }
     if (reasoningValue.needsHuman) bump('L2', reasoningValue.mode === 'degraded' ? '规则降级结果必须人工确认' : '模型判断需要人工介入');
     if (trace.degraded) {
       flags.push('degraded');
@@ -617,9 +628,17 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     const etaText = ctx.responseWindow ? ctx.responseWindow(p) : defaultEta[p];
     let candidate = reasoningValue.draft;
     if (autonomyValue.autoActionsExecuted.length) candidate += `\n\n（已为您登记跟进事项，编号 ${autonomyValue.autoActionsExecuted.map((a) => a.split(':')[1]).join('、')}）`;
-    let kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff';
+    let kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff' | 'boundary';
     let text: string;
-    if (autonomyValue.decision === 'escalate') {
+    const medicalFlags = riskValue.flags.filter((f) => f === 'medical' || f === 'medical_advice_in_draft');
+    if (medicalFlags.length) {
+      // 医疗边界：固定文案立即发送（不等待人工），候选话术也替换，避免坐席误采用模型建议
+      const emergency = riskValue.flags.includes('safety');
+      const boundary = emergency ? MEDICAL_EMERGENCY_TEXT : MEDICAL_BOUNDARY_TEXT;
+      kind = 'boundary';
+      candidate = boundary;
+      text = autonomyValue.decision === 'auto_reply' ? boundary : `${boundary}\n\n（已为您转人工客服，优先级 ${p}，${etaText}）`;
+    } else if (autonomyValue.decision === 'escalate') {
       kind = 'handoff';
       text = trace.degraded
         ? `${candidate}\n\n（已为您转接人工客服，优先级 ${p}，${etaText}）`
@@ -641,7 +660,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       ...(kind === 'answer' || kind === 'clarify' ? [] : [`候选话术（待人工确认后发送）：${candidate}`]),
     ].join('\n');
     trace.reply = { text, candidate, internalNote, kind };
-    const kindLabel = { answer: '生成回复', clarify: '生成追问', pending_confirm: '生成等待人工核实提示（候选话术留给坐席）', handoff: '生成转人工话术' }[kind];
+    const kindLabel = { answer: '生成回复', clarify: '生成追问', pending_confirm: '生成等待人工核实提示（候选话术留给坐席）', handoff: '生成转人工话术', boundary: '医疗边界固定文案（已拦截模型话术）' }[kind];
     return { summary: `${kindLabel}，对客 ${text.length} 字${kind === 'answer' || kind === 'clarify' ? '' : `，候选 ${candidate.length} 字`}`, detail: { text, candidate, internalNote, kind }, value: null };
   });
 
