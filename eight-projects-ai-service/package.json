@@ -17,6 +17,8 @@
     "start:prod": "cross-env SERVE_WEB=1 pnpm --filter @eight/api start",
     "test": "pnpm --filter @eight/agent-core test",
     "e2e": "playwright test -c e2e/playwright.config.ts",
+    "load:smoke": "k6 run -e SCENARIO=smoke load/k6-chat.js",
+    "load:peak": "k6 run -e SCENARIO=peak load/k6-chat.js",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm e2e"
   },
   "devDependencies": {
