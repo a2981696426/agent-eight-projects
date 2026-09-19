@@ -32,6 +32,8 @@ services:
       SERVE_WEB: "1"
       DATA_DIR: /data
       API_PORT: "8787"
+      # 工作日历与预计人工响应时窗按本地时区计算
+      TZ: Asia/Shanghai
       # 生产唯一持久化：PostgreSQL 16 + pgvector（CS-013 / ADR-0041）
       DATABASE_URL: postgres://eight:${POSTGRES_PASSWORD:-eight}@postgres:5432/eight
     volumes:
