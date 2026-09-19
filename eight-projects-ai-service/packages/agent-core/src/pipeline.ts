@@ -37,6 +37,8 @@ export interface ChainContext {
   now?: () => string;
   /** 阶段完成回调（SSE 进度推送） */
   onStage?: (stage: StageRecord, trace: Trace) => void;
+  /** 预计人工响应时窗文案（按工作日历与优先级档位计算；未提供时使用内置默认文案） */
+  responseWindow?: (priority: Priority) => string;
 }
 
 const STAGE_ORDER: StageId[] = ['intake', 'completion', 'intent', 'evidence', 'knowledge', 'reasoning', 'risk', 'autonomy', 'reply'];
@@ -508,7 +510,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       [/已(?:经)?(?:为您)?(?:退款|退回|赔付|补偿)|(?:退款|赔付|补偿)(?:已)?(?:成功|到账|完成)/, ['refund', 'price_difference_refund']],
       [/已(?:经)?(?:为您)?(?:补发|重发|安排发货)/, ['reship']],
       [/已(?:经)?(?:为您)?(?:开票|重开|换开)/, ['invoice_reissue']],
-      [/已(?:经)?(?:为您)?(?:登记|创建|提交|建立).{0,6}(?:工单|申请)/, ['create_ticket']],
+      [/已(?:经)?(?:为您)?(?:登记|创建|提交|建立).{0,6}(?:工单|申请|事项|子案件)/, ['create_ticket']],
     ];
     for (const [re, types] of promised) {
       if (re.test(draft) && !types.includes(action)) {
@@ -578,11 +580,12 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       decision = 'auto_reply';
       reasons.push(`白名单场景 ${pack.id}，风险 ${riskValue.level} ≤ 上限 ${cap}，动作 ${action.type} 在允许列表`);
       if (action.type === 'create_ticket') {
-        const def = ctx.tools.get('tickets.create');
+        // 本地只拆「子案件」（cases.create）；正式 DMS 工单必须由坐席在子案件页确认关联
+        const def = ctx.tools.get('cases.create');
         if (def) {
-          const ev = await ctx.tools.execute('tickets.create', { ...action.params, conversationId: ctx.conversation.id, customerId: ctx.conversation.customerId, title: action.reason || intent.out.intent, scenario: pack.id }, { conversationId: ctx.conversation.id, customerId: ctx.conversation.customerId, traceId: ctx.traceId }, 99);
+          const ev = await ctx.tools.execute('cases.create', { ...action.params, conversationId: ctx.conversation.id, customerId: ctx.conversation.customerId, title: action.reason || intent.out.intent, scenario: pack.id, traceId: ctx.traceId }, { conversationId: ctx.conversation.id, customerId: ctx.conversation.customerId, traceId: ctx.traceId }, 99);
           if (ev.ok) executed.push(`create_ticket:${(ev.data as any)?.id ?? 'ok'}`);
-          else reasons.push(`自动建单失败：${ev.error}`);
+          else reasons.push(`自动拆子案件失败：${ev.error}`);
         }
       }
     } else {
@@ -601,20 +604,22 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
 
   // ───────────────────────── 9. 最终回复 ─────────────────────────
   await stage('reply', async () => {
-    const eta: Record<Priority, string> = { P0: '15 分钟内', P1: '2 小时内', P2: '1 个工作日内' };
+    // 预计人工响应时窗：优先用宿主注入的日历计算（CS-008G），否则内置默认；只表示预计开始接续，不是完成承诺
+    const defaultEta: Record<Priority, string> = { P0: '已升级处理，专人会尽快联系您', P1: '预计 2 个工作小时内开始接续', P2: '预计 1 个工作日内开始处理' };
     const p = autonomyValue.priority ?? 'P2';
+    const etaText = ctx.responseWindow ? ctx.responseWindow(p) : defaultEta[p];
     let candidate = reasoningValue.draft;
-    if (autonomyValue.autoActionsExecuted.length) candidate += `\n\n（已为您创建跟进工单：${autonomyValue.autoActionsExecuted.map((a) => a.split(':')[1]).join('、')}）`;
+    if (autonomyValue.autoActionsExecuted.length) candidate += `\n\n（已为您登记跟进事项，编号 ${autonomyValue.autoActionsExecuted.map((a) => a.split(':')[1]).join('、')}）`;
     let kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff';
     let text: string;
     if (autonomyValue.decision === 'escalate') {
       kind = 'handoff';
       text = trace.degraded
-        ? `${candidate}\n\n（已为您转接人工客服，优先级 ${p}，预计 ${eta[p]}开始处理）`
-        : `${reasoningValue.proposedAction.type === 'clarify' ? '' : '您的问题我已经记录并整理好相关信息，'}已为您转接人工客服（优先级 ${p}，预计 ${eta[p]}开始处理）。人工上线后会直接接续本次对话，无需重复描述。`;
+        ? `${candidate}\n\n（已为您转接人工客服，优先级 ${p}，${etaText}）`
+        : `${reasoningValue.proposedAction.type === 'clarify' ? '' : '您的问题我已经记录并整理好相关信息，'}已为您转接人工客服（优先级 ${p}），${etaText}。人工上线后会直接接续本次对话，无需重复描述。`;
     } else if (autonomyValue.decision === 'human_confirm') {
       kind = 'pending_confirm';
-      text = `您的问题我已经整理好相关信息，正在由人工客服核实后回复您（优先级 ${p}，预计 ${eta[p]}），请稍候。`;
+      text = `您的问题我已经整理好相关信息，正在由人工客服核实后回复您（优先级 ${p}），${etaText}，请稍候。`;
     } else {
       kind = reasoningValue.proposedAction.type === 'clarify' ? 'clarify' : 'answer';
       text = candidate;

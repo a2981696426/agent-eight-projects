@@ -3,6 +3,8 @@ import type { AgentConfig, Conversation, Customer, KnowledgeChunk, Message, Stag
 import { J, nowIso, openDb, uid } from '../db.ts';
 import { env } from '../env.ts';
 import { DEFAULT_AGENT } from '../seed.ts';
+import { createCase } from '../routes/cases.ts';
+import { ensureHandoffTask, windowSentence } from './handoff.ts';
 
 const db = () => openDb();
 
@@ -126,20 +128,28 @@ export const tools = new ToolRegistry()
     },
   })
   .register({
-    name: 'tickets.create',
-    label: '创建工单',
-    description: '创建跟进工单（动作工具，仅在自治门禁允许时执行）',
+    name: 'cases.create',
+    label: '拆出子案件',
+    description: '把当前诉求拆为本地子案件供人工跟进（动作工具，仅在自治门禁允许时执行；不会写 DMS）',
     requires: ['conversationId'],
     mutating: true,
     run: async (a) => {
-      const id = `TK-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${uid().slice(0, 4).toUpperCase()}`;
       const conv = await db().get<{ customer_id: string; title: string }>('SELECT customer_id,title FROM conversations WHERE id=?', String(a.conversationId));
-      const cust = conv ? await db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', conv.customer_id) : null;
-      const now = nowIso();
-      const due = new Date(Date.now() + 24 * 3600e3).toISOString();
       const type = ({ logistics: '物流', invoice: '发票', refund_price_diff: '退款', complaint: '投诉', presale: '售前' } as Record<string, string>)[String(a.scenario)] ?? '其他';
-      await db().run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', id, String(a.title ?? '执行链自动建单'), type, 'open', 'P2', String(a.conversationId), conv?.customer_id ?? null, cust?.name ?? '未知', null, `由执行链自动创建。${a.reason ?? ''}`.trim(), due, now, now, 'chain', J.str([{ at: now, by: '执行链', action: '自动创建工单' }]));
-      return { id, type, slaDueAt: due };
+      const slots = Object.fromEntries(Object.entries(a).filter(([k, v]) => ['orderId', 'phone', 'invoiceTitle', 'taxId'].includes(k) && v != null).map(([k, v]) => [k, String(v)]));
+      const c = await createCase(db(), {
+        title: String(a.title ?? '执行链自动拆案'),
+        type,
+        priority: 'P2',
+        description: `由执行链自动拆出。${a.reason ?? ''}`.trim(),
+        conversationId: String(a.conversationId),
+        customerId: conv?.customer_id ?? null,
+        assignee: null,
+        evidence: { slots, traceIds: a.traceId ? [String(a.traceId)] : [] },
+        source: 'chain',
+        actor: '执行链',
+      });
+      return { id: c.id, type: c.type, status: c.status };
     },
   });
 
@@ -234,6 +244,8 @@ export async function runForConversation(conversationId: string, text: string, o
     history,
     traceId: uid('tr-'),
     onStage: opts.onStage,
+    // 预计人工响应时窗按工作日历 + 优先级档位计算（CS-008G/I），与接续任务里记录的一致
+    responseWindow: (p) => windowSentence(p),
   };
   const trace = await runChain(ctx, { text });
   await saveTrace(trace);
@@ -251,7 +263,23 @@ export async function runForConversation(conversationId: string, text: string, o
       const p = trace.autonomy?.priority ?? 'P2';
       await d.run("UPDATE conversations SET controller='human', status='waiting_human', priority=? WHERE id=?", p, conversationId);
       botMessage = await appendMessage(conversationId, 'bot', reply.text, { traceId: trace.id, meta: { kind: reply.kind, decision, priority: p } });
-      await appendMessage(conversationId, 'system', `【${decision === 'human_confirm' ? '待人工确认' : '升级人工'} ${p}】${reply.internalNote}`, { traceId: trace.id, meta: { internal: true, candidate: reply.candidate } });
+      // 人工接续任务（CS-008E）：保存已完成步骤、证据、缺项、候选话术与下一步；同会话只有一个活动任务
+      const { task, created } = await ensureHandoffTask({
+        conversationId,
+        channel: conv.channel,
+        priority: p,
+        reason: trace.autonomy?.reasons.join('；') ?? '执行链转人工',
+        progress: {
+          doneStages: trace.stages.filter((s) => s.status === 'ok').map((s) => s.id),
+          evidence: trace.evidence?.items.filter((i) => i.ok).map((i) => i.id) ?? [],
+          missing: trace.slots.filter((s) => s.source === 'missing').map((s) => s.key),
+          candidate: reply.candidate ?? null,
+          failure: trace.degraded ? `规则降级：${trace.degradedReason ?? '模型不可用'}` : null,
+          nextAction: decision === 'human_confirm' ? '核实候选话术后发送' : '接续会话并处理诉求',
+        },
+        traceId: trace.id,
+      });
+      await appendMessage(conversationId, 'system', `【${decision === 'human_confirm' ? '待人工确认' : '升级人工'} ${p} · 接续任务 ${task.id}${created ? '' : '（追加）'}】${reply.internalNote}`, { traceId: trace.id, meta: { internal: true, candidate: reply.candidate, handoffId: task.id } });
     }
   }
   if (trace.scenario && ['logistics', 'invoice', 'refund_price_diff'].includes(trace.scenario)) {
