@@ -7,6 +7,7 @@ import { HybridRetriever, VectorStore } from './retriever.ts';
 import { DEFAULT_AGENT } from '../seed.ts';
 import { createCase } from '../routes/cases.ts';
 import { ensureHandoffTask, windowSentence } from './handoff.ts';
+import { afterP0Handoff, visitorP0Sentence } from './oncall.ts';
 import { whitelistFor } from './whitelist.ts';
 import { PlatformUnavailable, detectPlatformOrder, platformSourceFromEnv, type PlatformDataSource } from './platform-data.ts';
 
@@ -351,6 +352,10 @@ export async function runForConversation(conversationId: string, text: string, o
         traceId: trace.id,
       });
       await appendMessage(conversationId, 'system', `【${decision === 'human_confirm' ? '待人工确认' : '升级人工'} ${p} · 接续任务 ${task.id}${created ? '' : '（追加）'}】${reply.internalNote}`, { traceId: trace.id, meta: { internal: true, candidate: reply.candidate, handoffId: task.id } });
+      if (p === 'P0') {
+        const alert = await afterP0Handoff(task.id, { visitorMessageId: botMessage?.id });
+        if (alert.delivered && botMessage) botMessage = { ...botMessage, text: botMessage.text.replace(visitorP0Sentence(false), visitorP0Sentence(true)) };
+      }
     }
   }
   if (trace.scenario && ['logistics', 'invoice', 'refund_price_diff'].includes(trace.scenario)) {

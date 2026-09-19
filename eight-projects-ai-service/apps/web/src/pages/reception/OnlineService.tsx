@@ -202,6 +202,11 @@ export default function OnlineService() {
                 <Tag color={detail.handoffTask.priority === 'P0' ? 'red' : detail.handoffTask.priority === 'P1' ? 'orange' : 'default'}>{detail.handoffTask.priority}</Tag>
                 <span>接续任务 <span className="mono">{detail.handoffTask.id}</span> · {detail.handoffTask.status === 'pending' ? '待接续' : `接续中 · ${detail.handoffTask.claimedBy}`}</span>
                 <span style={{ color: '#6b7280' }}>{detail.handoffTask.windowText} · 目标 {fmtShort(detail.handoffTask.dueAt)}</span>
+                {detail.handoffTask.priority === 'P0' && (
+                  <Tag color={detail.handoffTask.alert?.ackAt ? 'green' : detail.handoffTask.alert?.deliveredAt ? 'orange' : 'red'}>
+                    {detail.handoffTask.alert?.ackAt ? `P0 已确认${detail.handoffTask.alert.ackBy ? ` · ${detail.handoffTask.alert.ackBy}` : ''}` : detail.handoffTask.alert?.deliveredAt ? 'P0 已回执未确认' : 'P0 未投递'}
+                  </Tag>
+                )}
               </Space>
               {detail.handoffTask.status === 'pending' && (
                 <Button size="small" type="primary" onClick={() => api(`/api/handoffs/${detail.handoffTask!.id}/claim`, { method: 'POST' }).then(() => loadDetail(detail.conversation.id)).then(() => reload()).then(() => message.success('已认领并接管会话')).catch((e) => message.error((e as Error).message))}>认领并接管</Button>

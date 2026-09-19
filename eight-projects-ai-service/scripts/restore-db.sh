@@ -6,8 +6,8 @@ cd "$(dirname "$0")/.."
 FILE="${1:?用法: restore-db.sh <dump 文件>}"
 [[ -f "$FILE" ]] || { echo "文件不存在: $FILE"; exit 1; }
 
-echo "[1/4] 停止应用，避免恢复期间写入"
-docker compose stop ai-service
+echo "[1/4] 停止应用（两个副本），避免恢复期间写入"
+docker compose stop api-blue api-green
 
 echo "[2/4] 恢复到临时库 eight_restore"
 docker compose exec -T postgres psql -U eight -d postgres -v ON_ERROR_STOP=1 \
@@ -23,5 +23,5 @@ docker compose exec -T postgres psql -U eight -d postgres -v ON_ERROR_STOP=1 \
   -c "ALTER DATABASE eight_restore RENAME TO eight;"
 
 echo "[4/4] 启动应用"
-docker compose start ai-service
+docker compose start api-blue api-green
 echo "restored from $FILE; previous database kept as ${OLD} (drop it manually after verification)"

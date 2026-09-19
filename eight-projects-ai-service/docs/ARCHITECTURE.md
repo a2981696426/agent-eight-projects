@@ -51,7 +51,7 @@
 
 - **登录与角色**：`services/auth.ts`，scrypt 密码哈希 + 服务端会话 + 签名 httpOnly Cookie；三角色 admin / agent / analyst；`onRequest` 钩子统一鉴权，公开接口只有健康检查、登录与访客端最小集合；越权写操作 403 并写审计。前端 `RequireAuth` 路由守卫 + 角色隐藏发布/演练按钮。演示账号见登录页。
 - **单端口生产模式**：`SERVE_WEB=1` 时 API 用 `@fastify/static` 托管 `apps/web/dist`，非 `/api` GET 回退 `index.html`。
-- **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 含 `postgres`（`pgvector/pgvector:pg16`，healthcheck）与 `ai-service`，读取 `.env`。
+- **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 为 `Caddy`（TLS）→ `api-blue` + `api-green`（`INSTANCE_COLOR`，`/api/health` 探活）→ `postgres`（`pgvector/pgvector:pg16`）；升级走 `scripts/deploy.sh` 蓝绿轮换。
 - **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
 
 ## 电商平台只读业务数据源（L15，CS-018）
@@ -79,7 +79,7 @@
 ## 渠道接入（L12，CS-012 / CS-014）
 
 - **渠道适配器契约**（`services/channels.ts`）：`ChannelAdapter { channel, capabilities, send(externalUserId, text), health() }`。适配器只做协议、授权、限流、会话与错误语义；意图、知识、规则与回复决策全部在统一客服 Agent。入站以 `(channel, externalMsgId)` 幂等（`channel_messages`），外部身份映射到演示客户档案（`channel_identities`，不与 UMS/佩戴用户合并），24 小时内未结束的同渠道会话复用；机器人接待走执行链，人工接待只落库（单一响应者）。投递结果如实写回 `messages.meta.delivery`（`sent / failed / skipped / queued`），不伪造送达。
-- **异步作业**（`services/jobs.ts`，pg-boss）：`channel.inbound`（Webhook 先 ack 再处理）与 `channel.deliver`（出站，重试 5 次指数退避；不可重试失败如 48 小时窗口过期直接如实记录并给坐席系统消息）。PGlite 用 `fromPglite` 共享同一实例，生产用 PostgreSQL 连接串；不引入 Redis（CS-013）。坐席回复也经同一队列投递。
+- **异步作业**（`services/jobs.ts`，pg-boss）：`channel.inbound`（Webhook 先 ack 再处理）、`channel.deliver`（出站，重试 5 次指数退避；不可重试失败如 48 小时窗口过期直接如实记录并给坐席系统消息）、`knowledge.embed`、`oncall.watch`（P0 未确认 15 分钟升级）。PGlite 用 `fromPglite` 共享同一实例，生产用 PostgreSQL 连接串；不引入 Redis（CS-013）。坐席回复也经同一队列投递。
 - **微信公众号 / 测试号**（`channels/wechat.ts`、`routes/channels.ts`）：`GET /api/channels/wechat/webhook` 签名校验回 echostr；`POST` 校验签名（安全模式再校验 `msg_signature` 并 AES-256-CBC 解密）→ XML 归一化（text / image / subscribe）→ 入队 → **立即** 回 `success`（5 秒约束）。客服消息发送带 access_token 缓存与失效重取；`45015` → `window_expired`（不可重试）、`45047` → `rate_limited`。未配置 AppID 或 `WECHAT_MOCK=1` 时为 mock：不出网，发送记录见 `GET /api/channels/wechat/mock/sent`。
 - **官网嵌入**（`apps/web/public/embed.js`）：一行 `<script>` 注入右下角浮动按钮与 iframe，加载同源 `/visitor?embed=1&channel=web&site=…`；访客端 embed 模式无外框、匿名自动开始，会话记在 iframe 本地存储。演示页 `/embed-demo.html`。web 渠道无出站适配器（访客端轮询），投递记为 `skipped`。
 - **容量**：见 `docs/LOAD-TEST.md`——200 VU 下平台开销 p95 ≈ 1 s（单进程 CPU 满载），真实模型执行链 p95 ≈ 12 s；门禁 15 s 通过但余量约 20%。
@@ -91,7 +91,8 @@
 - **DMS 适配器**：`MockDmsAdapter`（默认，`DMS_MODE=mock`）与将来的真实实现共用同一契约；失败是业务结果（`unavailable` → 待同步案件、`rejected` / `account_cancelled` → 记录原因不改状态、`not_found` → 回填被拒）。建单以子案件 id 为幂等键。所有 DMS 写入都由坐席按钮触发，执行链只会 `cases.create` 拆本地子案件。
 - **人工接续任务**（`services/handoff.ts`）：执行链决策为 `human_confirm` / `escalate`、或坐席「转接」时创建；保存已完成阶段、证据、缺项、候选话术、失败原因、下一步；同一会话同一时刻只有一个活动任务（重复触发追加进度、优先级只升不降、沿用最早创建时间）；认领 = 接管会话（单一响应者）；会话结束或转回机器人时取消。
 - **预计人工响应时窗**：工作日历（`WORK_HOURS` / `WORK_DAYS` / `HOLIDAYS`，本地时区）+ 档位：P0 15 自然分钟、P1 2 工作小时、P2 1 个工作日（按工时折算）。文案只表示"预计开始接续"，P0 未取得告警回执时不说"已优先通知专人"。同一函数通过 `ChainContext.responseWindow` 注入最终回复，与任务上记录的一致。
-- **未做**：P0 轮值告警投递（CS-008H，`alert` 字段预留）、跨渠道强锚点关联（CS-008F）、真实 DMS 适配器（接口授权中）。
+- **P0 轮值告警**（L16，CS-008H / ADR-0035）：`services/oncall.ts`。花名册 `ONCALL_ROSTER` 按日轮转；`ONCALL_MODE=mock|wecom|off`。执行链或坐席转接创建 P0 任务后立即投递当值；**只有 `deliveredAt` 回执**才把访客气泡从「已升级处理，专人会尽快联系您」改为「已优先通知专人…」。15 自然分钟未 `ack` → `oncall.watch` 沿升级链下一跳；名单走完记失败，不得静默。认领接续任务同时确认告警。接口：`GET /api/oncall/status`、`POST /api/oncall/alerts/:id/ack`（坐席）、`POST .../escalate`（管理员立即升级）。
+- **未做**：跨渠道强锚点关联（CS-008F）、真实 DMS 适配器（接口授权中）。
 
 ## 数据层（L10，CS-013 / ADR-0041）
 

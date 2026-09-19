@@ -89,7 +89,7 @@ export function computeWindow(priority: Priority, now: Date, cal: WorkCalendar, 
   return { dueAt: addWorkHours(now, dayHours, cal).toISOString(), text: '预计 1 个工作日内开始处理' };
 }
 
-export const windowSentence = (p: Priority, now = new Date()) => computeWindow(p, now, calendarFromEnv()).text;
+export const windowSentence = (p: Priority, now = new Date(), alertDelivered = false) => computeWindow(p, now, calendarFromEnv(), alertDelivered).text;
 
 /* ───────────── 任务生命周期 ───────────── */
 const db = () => openDb();

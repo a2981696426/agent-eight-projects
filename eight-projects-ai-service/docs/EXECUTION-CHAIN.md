@@ -35,6 +35,6 @@ Benchmark（同一 10 例）：平均耗时 8825ms → 5399ms，决策准确率 
 
 ## 会话落库规则（`runForConversation`）
 
-- 机器人接待（`controller = bot`）：对客消息**永远等于 `trace.reply.text`**（单一来源）。`auto_reply` → 追加候选话术；`human_confirm` / `escalate` → 会话转 `waiting_human`，对客发送等待/转接提示，并以系统内部消息保存内部备注与候选话术供坐席在工作台一键采用。访客端（`/visitor`）只显示非 system 消息。
+- 机器人接待（`controller = bot`）：对客消息**永远等于 `trace.reply.text`**（单一来源）。`auto_reply` → 追加候选话术；`human_confirm` / `escalate` → 会话转 `waiting_human`，对客发送等待/转接提示，并以系统内部消息保存内部备注与候选话术供坐席在工作台一键采用。**P0** 随后走 `afterP0Handoff`：投递成功才把已落库的 `reply.text` 中「已升级处理…」改写成「已优先通知专人…」（无回执不得改）。访客端（`/visitor`）只显示非 system 消息。
 - 坐席辅助（`assist`）：不落消息，只返回带依据的建议，坐席可一键采用到输入框。
 - 每个 trace 记录 Agent 版本、模型用量、总耗时，`Benchmark` 用同一函数在沙箱中跑冻结评测集。

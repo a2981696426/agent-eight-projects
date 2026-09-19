@@ -11,6 +11,7 @@ import { seed } from './seed.ts';
 import { knowledgeIndex, llm, refreshIndex } from './services/chain.ts';
 import { installAuth, seedUsers } from './services/auth.ts';
 import { enqueueEmbed, jobsStatus, startJobs, stopJobs } from './services/jobs.ts';
+import { oncallStatus } from './services/oncall.ts';
 import { channelStatus } from './services/channels.ts';
 import { conversationRoutes } from './routes/conversations.ts';
 import { caseRoutes } from './routes/cases.ts';
@@ -42,8 +43,22 @@ export async function buildServer() {
   await seedUsers();
   installAuth(app);
 
-  app.get('/api/health', async () => ({
-    status: 'ok',
+  app.get('/api/health', async (_req, reply) => {
+    // 数据库探活：Caddy 健康检查与故障演练都依赖它；不可达时返回 503，让负载均衡摘除该副本
+    let dbOk = true;
+    let dbError: string | null = null;
+    try {
+      await Promise.race([openDb().get('SELECT 1 AS ok'), new Promise((_, rej) => setTimeout(() => rej(new Error('db probe timeout')), 3000))]);
+    } catch (e) {
+      dbOk = false;
+      dbError = (e as Error).message;
+    }
+    if (!dbOk) reply.code(503);
+    return healthDoc(dbOk, dbError);
+  });
+  const healthDoc = async (dbOk: boolean, dbError: string | null) => ({
+    status: dbOk ? 'ok' : 'degraded',
+    instance: process.env.INSTANCE_COLOR ?? process.env.HOSTNAME ?? 'local',
     product: 'eight-projects-ai-service',
     version: VERSION,
     mode: env.serveWeb ? 'production' : 'development',
@@ -57,10 +72,13 @@ export async function buildServer() {
     },
     knowledgeIndexed: knowledgeIndex().size,
     db: openDb().kind,
+    dbOk,
+    dbError,
     jobs: jobsStatus(),
     channels: await channelStatus(),
+    oncall: await oncallStatus().then((s) => ({ mode: s.mode, configured: s.configured, duty: s.duty, pending: s.pending.length })).catch((e) => ({ error: (e as Error).message })),
     time: new Date().toISOString(),
-  }));
+  });
 
   app.get('/api/overview', async () => {
     const db = openDb();
@@ -70,6 +88,7 @@ export async function buildServer() {
       waitingHuman: await n("SELECT COUNT(*) n FROM conversations WHERE status='waiting_human'"),
       cases: await n("SELECT COUNT(*) n FROM cases WHERE status <> 'archived'"),
       handoffsPending: await n("SELECT COUNT(*) n FROM handoff_tasks WHERE status='pending'"),
+      p0Unacked: await n("SELECT COUNT(*) n FROM handoff_tasks WHERE priority='P0' AND status='pending'"),
       traces: await n('SELECT COUNT(*) n FROM traces'),
       knowledge: await n("SELECT COUNT(*) n FROM knowledge_docs WHERE status='published'"),
       quality: await n('SELECT COUNT(*) n FROM quality_results'),

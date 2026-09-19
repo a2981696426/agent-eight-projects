@@ -1,18 +1,19 @@
 # 运行手册（腾讯云单机 · Docker Compose）
 
-适用形态：一台 4 核 8G 云服务器，`docker compose` 运行 `postgres`（pgvector/pg16）与 `ai-service`（API 托管前端）。依据 CS-013 / ADR-0041。
+适用形态：一台 4 核 8G 云服务器，`docker compose` 运行 **Caddy（TLS）→ api-blue + api-green → postgres（pgvector/pg16 + pg-boss）**。依据 CS-013 / ADR-0041。演练步骤与登记见 [DRILLS.md](./DRILLS.md)。
 
 ## 1. 启动 / 停止 / 升级
 
 ```bash
 cp .env.example .env          # 填 LLM_API_KEY、SESSION_SECRET、POSTGRES_PASSWORD
-docker compose up -d --build  # 首次会拉取 pgvector/pgvector:pg16 并构建应用镜像
-docker compose ps             # 两个容器均为 healthy / running
-docker compose logs -f ai-service
+# 可选：SITE_ADDRESS=cs.example.com（ICP 通过后自动 HTTPS）；HTTP_PORT / HTTPS_PORT
+docker compose up -d --build  # 首次拉取 pgvector 与 caddy，构建应用镜像（只编 api-blue，green 复用）
+docker compose ps             # postgres / api-blue / api-green / caddy 均为 healthy 或 running
+docker compose logs -f caddy
 docker compose stop           # 停止；数据在 pgdata 卷中保留
 ```
 
-升级：`./scripts/backup-db.sh && git pull && docker compose up -d --build`。应用启动时自动执行幂等迁移（`CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`）。
+升级（零中断蓝绿）：`./scripts/deploy.sh`（先备份，再轮换 blue、green，Caddy 健康检查摘除未就绪副本）。回滚：`./scripts/deploy.sh --rollback`。应用启动时自动执行幂等迁移。
 
 ## 2. 健康检查
 
@@ -32,7 +33,7 @@ docker compose stop           # 停止；数据在 pgdata 卷中保留
 
 | 现象 | 判断 | 处理 |
 |---|---|---|
-| API 全部 500，日志含 `ECONNREFUSED 5432` | Postgres 未就绪或崩溃 | `docker compose restart postgres`，等待 healthy 后 `docker compose restart ai-service` |
+| API 全部 500，日志含 `ECONNREFUSED 5432` | Postgres 未就绪或崩溃 | `docker compose restart postgres`，等待 healthy 后 `docker compose restart api-blue api-green` |
 | `/api/health` 中 provider `circuit=open` | 上游模型故障，已自动熔断 | 无需操作；`LLM_CIRCUIT_COOLDOWN_MS` 后自动半开探测；全部 provider 不可用时执行链进入规则降级，trace 标记 `degraded` |
 | 磁盘占用高 | `pgdata` 卷或 `backups/` 增长 | `docker system df`；清理 30 天外备份（脚本已自动）；必要时 `VACUUM` |
 | 忘记 SESSION_SECRET 变更导致全员登出 | Cookie 签名失效 | 预期行为；提醒重新登录 |
@@ -54,7 +55,7 @@ docker compose stop           # 停止；数据在 pgdata 卷中保留
 
 ## 7. 异步队列（pg-boss）
 
-- 队列：`channel.inbound`、`channel.deliver`；`/api/health` 的 `jobs.started` 应为 `true`。
+- 队列：`channel.inbound`、`channel.deliver`、`knowledge.embed`、`oncall.watch`；`/api/health` 的 `jobs.started` 应为 `true`。
 - 排查：`SELECT name, state, count(*) FROM pgboss.job GROUP BY 1,2;`（生产 PostgreSQL）；失败任务保留 14 天，`retry` 状态表示等待退避重试。
 - 发送失败不会重试的情况（48 小时窗口过期、被拒绝）会在会话里追加系统消息，坐席可见。
 
@@ -76,4 +77,11 @@ docker compose stop           # 停止；数据在 pgdata 卷中保留
 
 - 不设 `DATABASE_URL` → PGlite 进程内 Postgres，数据在 `data/pglite/`，删除该目录即重置并重新 seed。
 - `DATA_DIR=:memory:` → 纯内存库（单测使用）。
-- 想在本机连真实 Postgres：`docker compose up -d postgres`，然后 `DATABASE_URL=postgres://eight:eight@localhost:5432/eight pnpm dev`。
+- 想在本机连真实 Postgres：`docker compose up -d postgres`，然后 `DATABASE_URL=postgres://eight:eight@localhost:${POSTGRES_PORT:-55432}/eight pnpm dev`（宿主机默认 55432，避免与本机 5432 冲突）。
+
+## 11. P0 轮值告警（CS-008H）
+
+- `.env`：`ONCALL_MODE=mock`（本机/演练）或 `wecom`（生产，填 `ONCALL_WEBHOOK` 企业微信群机器人）；`ONCALL_ROSTER=姓名1,姓名2,姓名3`（按日轮转，升级链从当值起向后）。
+- 验收：制造一条 P0 接续任务 → `GET /api/oncall/status` 的 `pending` 出现且 `deliveredAt` 有值 → 工单协作页显示「P0 已回执」→ 15 分钟内 `POST /api/oncall/alerts/:id/ack` 或认领任务；超时未确认会升下一跳。管理员可 `POST .../escalate` 立即演练下一跳。
+- **禁止**：通道关闭或投递失败时对访客说「已优先通知专人」。`off` 或缺花名册只记失败历史，执行链不中断。
+- 排障：`handoff_tasks.alert` JSON 含 `hops[].receipt`；无回执查 `ONCALL_MODE` / webhook HTTP 与企业微信 `errcode`。

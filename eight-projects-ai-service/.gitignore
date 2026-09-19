@@ -17,3 +17,4 @@ e2e/.auth/
 artifacts/
 e2e/.auth/
 load/results/
+backups/

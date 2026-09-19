@@ -6,6 +6,7 @@ import { classify, summarize } from '../services/aigc.ts';
 import { activeTask, cancelActiveTasks, claimActiveTask, ensureHandoffTask } from '../services/handoff.ts';
 import { createCase, toCase } from './cases.ts';
 import { enqueueDeliver } from '../services/jobs.ts';
+import { afterP0Handoff } from '../services/oncall.ts';
 
 const db = () => openDb();
 const audit = (actor: string, action: string, target: string, detail: unknown = null) => db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), actor, action, target, J.str(detail));
@@ -153,6 +154,10 @@ export async function conversationRoutes(app: FastifyInstance) {
       const p = ((row.priority as string) ?? 'P2') as 'P0' | 'P1' | 'P2';
       const { task, created } = await ensureHandoffTask({ conversationId: id, channel: String(row.channel ?? 'web'), priority: p, reason: `坐席转人工排队${body.reason ? `：${body.reason}` : ''}`, progress: { doneStages: [], evidence: [], missing: [], candidate: null, failure: null, nextAction: '接续会话并处理诉求' }, traceId: null });
       if (created) await appendMessage(id, 'system', `【已创建人工接续任务 ${task.id}】${task.windowText}`, { meta: { internal: true, handoffId: task.id } });
+      if (p === 'P0') {
+        const alert = await afterP0Handoff(task.id);
+        await appendMessage(id, 'system', `【P0 轮值告警】${alert.delivered ? `已投递 ${alert.task.alert?.hops?.at(-1)?.target ?? ''} 并取得回执` : '投递未成功，对外不得声称已通知专人'}`, { meta: { internal: true, handoffId: task.id } });
+      }
     } else if (body.action === 'takeover') {
       await claimActiveTask(id, body.actor);
     } else if (body.action === 'close' || body.action === 'robot') {

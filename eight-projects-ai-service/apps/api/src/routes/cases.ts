@@ -6,6 +6,7 @@ import { dms, dmsMock, type DmsResult } from '../services/dms.ts';
 import { appendTaskHistory, claimTask, finishTask, loadTask, rowToTask } from '../services/handoff.ts';
 import { actorOf } from '../services/auth.ts';
 import { appendMessage } from '../services/chain.ts';
+import { ackAlert, escalateIfUnacked, oncallStatus } from '../services/oncall.ts';
 import type { DmsTicket } from '@eight/shared';
 
 /**
@@ -240,7 +241,8 @@ export async function caseRoutes(app: FastifyInstance) {
   });
   app.post('/api/handoffs/:id/claim', async (req) => {
     const actor = actorOf(req);
-    const t = await claimTask((req.params as { id: string }).id, actor);
+    let t = await claimTask((req.params as { id: string }).id, actor);
+    if (t.priority === 'P0' && !t.alert?.ackAt) t = (await ackAlert(t.id, actor)) ?? t;
     await appendMessage(t.conversationId, 'system', `【人工接续】${actor} 已认领接续任务 ${t.id} 并接管会话`, { meta: { internal: true, handoffId: t.id } });
     await audit(actor, 'handoff.claim', t.id, { conversationId: t.conversationId });
     return t;
@@ -280,5 +282,21 @@ export async function caseRoutes(app: FastifyInstance) {
     await audit(actor, 'handoff.split_case', t.id, { caseId: c.id });
     reply.code(201);
     return { task, case: c };
+  });
+
+  /* ───────────── P0 轮值告警（CS-008H） ───────────── */
+  app.get('/api/oncall/status', async () => oncallStatus());
+  app.post('/api/oncall/alerts/:id/ack', async (req, reply) => {
+    const actor = actorOf(req);
+    const t = await ackAlert((req.params as { id: string }).id, actor);
+    if (!t) return reply.code(404).send({ error: '接续任务不存在' });
+    await audit(actor, 'oncall.ack', t.id, { ackBy: actor });
+    return t;
+  });
+  app.post('/api/oncall/alerts/:id/escalate', async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const r = await escalateIfUnacked(id);
+    await audit(actorOf(req), 'oncall.escalate', id, { sent: r.sent, reason: r.reason ?? null });
+    return r;
   });
 }

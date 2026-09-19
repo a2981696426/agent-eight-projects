@@ -338,7 +338,13 @@ export interface HandoffTask {
   claimedBy: string | null;
   claimedAt: string | null;
   doneAt: string | null;
-  alert: { deliveredAt: string | null; ackAt: string | null } | null;
+  alert: {
+    deliveredAt: string | null;
+    ackAt: string | null;
+    ackBy?: string | null;
+    currentHop?: number;
+    hops?: { at: string; target: string; ok: boolean; receipt: string | null; error?: string }[];
+  } | null;
   history: HistoryEntry[];
 }
 

@@ -1,3 +1,30 @@
+# 单机形态（切片 0 / CS-013 / ADR-0041）：Caddy（TLS）→ API 蓝绿双副本 → PostgreSQL 16 + pgvector + pg-boss
+# 发布：./scripts/deploy.sh（构建新镜像 → 轮换重启 blue、green，Caddy 健康检查保证零中断）
+# 备份 / 恢复：./scripts/backup-db.sh、./scripts/restore-db.sh；演练记录见 docs/DRILLS.md
+
+x-api: &api
+  image: eight-projects-ai-service:latest
+  # 镜像只在本机由 api-blue 的 build 产生，绝不从仓库拉取
+  pull_policy: never
+  depends_on:
+    postgres:
+      condition: service_healthy
+  env_file:
+    - .env            # LLM_API_KEY / LLM_BASE_URL / LLM_FALLBACK_* / SESSION_SECRET / EMBEDDING_* / WECHAT_* / TAOBAO_*
+  environment: &api-env
+    SERVE_WEB: "1"
+    DATA_DIR: /data
+    API_PORT: "8787"
+    TZ: Asia/Shanghai
+    DATABASE_URL: postgres://eight:${POSTGRES_PASSWORD:-eight}@postgres:5432/eight
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8787/api/health >/dev/null || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 6
+    start_period: 20s
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -7,8 +34,9 @@ services:
       POSTGRES_DB: eight
       POSTGRES_USER: eight
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eight}
-      # 中文排序/比较用 C 排序规则最稳，UTF8 编码
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,29 +45,45 @@ services:
       timeout: 3s
       retries: 20
 
-  ai-service:
+  api-blue:
+    <<: *api
     build: .
-    image: eight-projects-ai-service:latest
-    container_name: eight-ai-service
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "${API_PORT:-8787}:8787"
-    env_file:
-      - .env            # LLM_API_KEY / LLM_BASE_URL / LLM_FALLBACK_* / SESSION_SECRET
+    container_name: eight-api-blue
     environment:
-      SERVE_WEB: "1"
-      DATA_DIR: /data
-      API_PORT: "8787"
-      # 工作日历与预计人工响应时窗按本地时区计算
-      TZ: Asia/Shanghai
-      # 生产唯一持久化：PostgreSQL 16 + pgvector（CS-013 / ADR-0041）
-      DATABASE_URL: postgres://eight:${POSTGRES_PASSWORD:-eight}@postgres:5432/eight
+      <<: *api-env
+      INSTANCE_COLOR: blue
     volumes:
-      - ai-service-data:/data
+      - api-data:/data
+
+  api-green:
+    <<: *api
+    container_name: eight-api-green
+    environment:
+      <<: *api-env
+      INSTANCE_COLOR: green
+    volumes:
+      - api-data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: eight-caddy
     restart: unless-stopped
+    depends_on:
+      - api-blue
+      - api-green
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      # ICP 通过后设为域名（如 cs.example.com）即自动 HTTPS；为空时监听 :80
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
 
 volumes:
   pgdata:
-  ai-service-data:
+  api-data:
+  caddy-data:
+  caddy-config:

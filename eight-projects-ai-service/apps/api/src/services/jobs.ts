@@ -3,14 +3,17 @@ import type { InboundMessage } from '@eight/shared';
 import { driverHandle } from '../db.ts';
 import { deliverMessage, ingestInbound } from './channels.ts';
 import { embedDoc } from './chain.ts';
+import { escalateIfUnacked, pendingP0Unacked } from './oncall.ts';
 
 /**
  * 异步作业（CS-013：pg-boss，同库，不引入 Redis）：
  * - channel.inbound：渠道 Webhook 先 ack 再处理（微信 5 秒窗口）
  * - channel.deliver：出站投递，可重试失败按退避重试，不可重试失败由 deliverMessage 如实写回
+ * - knowledge.embed：发布/导入后补齐向量
+ * - oncall.watch：P0 未确认 15 分钟升级下一跳
  * PGlite（本机/测试）用 fromPglite 共享同一实例；生产用 PostgreSQL 连接串。
  */
-export const QUEUES = { inbound: 'channel.inbound', deliver: 'channel.deliver', embed: 'knowledge.embed' } as const;
+export const QUEUES = { inbound: 'channel.inbound', deliver: 'channel.deliver', embed: 'knowledge.embed', alert: 'oncall.watch' } as const;
 
 interface DeliverPayload {
   conversationId: string;
@@ -19,6 +22,9 @@ interface DeliverPayload {
 interface EmbedPayload {
   /** null = 补齐所有缺失块 */
   docId: string | null;
+}
+interface AlertPayload {
+  taskId: string;
 }
 
 let boss: PgBoss | null = null;
@@ -39,7 +45,14 @@ export async function startJobs(opts: { pollingIntervalSeconds?: number } = {}):
   await b.createQueue(QUEUES.inbound, { retryLimit: 3, retryDelay: 5, retryBackoff: true, expireInSeconds: 120 });
   await b.createQueue(QUEUES.deliver, { retryLimit: 5, retryDelay: 5, retryBackoff: true, expireInSeconds: 60 });
   await b.createQueue(QUEUES.embed, { retryLimit: 3, retryDelay: 10, retryBackoff: true, expireInSeconds: 300 });
+  await b.createQueue(QUEUES.alert, { retryLimit: 2, retryDelay: 60, retryBackoff: true, expireInSeconds: 1800 });
   const pollingIntervalSeconds = opts.pollingIntervalSeconds ?? 1;
+
+  await b.work<AlertPayload>(QUEUES.alert, { pollingIntervalSeconds, batchSize: 5 }, async ([job]) => {
+    const r = await escalateIfUnacked(job.data.taskId);
+    if (r.sent && !r.task.alert?.ackAt) await enqueueOncallWatch(job.data.taskId, 900);
+    return { sent: r.sent, reason: r.reason };
+  });
 
   await b.work<EmbedPayload>(QUEUES.embed, { pollingIntervalSeconds, batchSize: 1 }, async ([job]) => {
     const n = await embedDoc(job.data.docId);
@@ -73,6 +86,7 @@ export async function startJobs(opts: { pollingIntervalSeconds?: number } = {}):
 
   boss = b;
   backend = handle.kind;
+  for (const t of await pendingP0Unacked()) await enqueueOncallWatch(t.id, 60);
 }
 
 export async function stopJobs(): Promise<void> {
@@ -103,6 +117,12 @@ export async function enqueueDeliver(conversationId: string, messageId: string, 
 
 export async function jobById(queue: string, id: string) {
   return boss ? boss.getJobById(queue, id) : null;
+}
+
+/** P0 未确认守望：默认 15 分钟后检查升级链；队列未启动时由调用方同步 escalate */
+export async function enqueueOncallWatch(taskId: string, delaySeconds = 900): Promise<string | null> {
+  if (!boss) return null;
+  return boss.send(QUEUES.alert, { taskId } satisfies AlertPayload, { startAfter: delaySeconds, expireInSeconds: delaySeconds + 180, singletonKey: `p0:${taskId}`, singletonSeconds: Math.max(30, delaySeconds) });
 }
 
 /** 知识向量化：发布 / 重切块 / 导入后调用；队列未启动时同步执行 */

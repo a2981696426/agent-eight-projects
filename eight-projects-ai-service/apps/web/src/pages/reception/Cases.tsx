@@ -51,6 +51,7 @@ export default function Cases() {
   const { data: cases, loading: casesLoading, reload: reloadCases } = useApi<SubCase[]>(`/api/cases?${q.toString()}`, { pollMs: 10_000 });
   const { data: mock, reload: reloadMock } = useApi<DmsMockInfo>(isAdmin ? '/api/dms/mock' : null, { pollMs: 10_000 });
   const { data: health, reload: reloadHealth } = useApi<{ ok: boolean; kind: string; mode: string }>('/api/dms/health', { pollMs: 10_000 });
+  const { data: oncall, reload: reloadOncall } = useApi<{ mode: string; configured: boolean; duty: string | null; roster: string[]; pending: { id: string; deliveredAt: string | null; hop: number }[] }>('/api/oncall/status', { pollMs: 10_000 });
 
   const [active, setActive] = useState<SubCase | null>(null);
   const [note, setNote] = useState('');
@@ -59,7 +60,7 @@ export default function Cases() {
   const [form] = Form.useForm();
   const [busy, setBusy] = useState<string | null>(null);
 
-  const refreshAll = () => Promise.all([reloadTasks(), reloadTaskStats(), reloadCases(), reloadCaseStats(), reloadMock(), reloadHealth()]);
+  const refreshAll = () => Promise.all([reloadTasks(), reloadTaskStats(), reloadCases(), reloadCaseStats(), reloadMock(), reloadHealth(), reloadOncall()]);
   const run = async (key: string, fn: () => Promise<unknown>, ok?: string) => {
     setBusy(key);
     try {
@@ -98,6 +99,12 @@ export default function Cases() {
   }
 
   const overdue = (t: HandoffTask) => t.status === 'pending' && new Date(t.dueAt).getTime() < Date.now();
+  const p0Alert = (t: HandoffTask) => {
+    if (t.priority !== 'P0') return null;
+    if (t.alert?.ackAt) return <Tag color="green">P0 已确认{t.alert.ackBy ? ` · ${t.alert.ackBy}` : ''}</Tag>;
+    if (t.alert?.deliveredAt) return <Tag color="orange">P0 已回执 · 第 {(t.alert.currentHop ?? 0) + 1} 跳</Tag>;
+    return <Tag color="red">P0 未投递</Tag>;
+  };
   const kpi = (label: string, value: number | string | undefined, danger = false) => (
     <Col xs={8} md={4} key={label}>
       <div className="kpi"><div className="label">{label}</div><div className="value" style={{ color: danger && Number(value) > 0 ? '#cf1322' : undefined }}>{value ?? '—'}</div></div>
@@ -113,6 +120,7 @@ export default function Cases() {
           <div className="desc">正式售后工单在 DMS；本平台只持有子案件、证据、接续任务与关联轨迹（CS-003 / CS-016）。接续任务按工作日历与优先级档位给出预计人工响应时窗。</div>
         </div>
         <Space>
+          <Tag color={oncall?.configured ? 'green' : 'default'}>轮值 · {oncall?.duty ?? '未配置'}{oncall?.pending?.length ? ` · ${oncall.pending.length} 未确认` : ''}</Tag>
           <Tag color={health?.ok ? 'green' : 'red'} icon={<ApiOutlined />}>DMS · {health?.kind === 'mock' ? `模拟 · ${MODE_LABEL[(health?.mode as DmsMockMode) ?? 'normal'] ?? health?.mode}` : health?.mode ?? '连接中…'}</Tag>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>新建子案件</Button>
         </Space>
@@ -156,6 +164,7 @@ export default function Cases() {
                         {t.progress.failure && <div style={{ color: '#cf1322' }}><b>失败原因</b>：{t.progress.failure}</div>}
                         {t.progress.candidate && <div style={{ gridColumn: '1 / span 2', whiteSpace: 'pre-wrap', background: '#fafafa', padding: 8, borderRadius: 6 }}><b>候选话术（未发送）</b>：{t.progress.candidate}</div>}
                         <div style={{ gridColumn: '1 / span 2' }}><b>轨迹</b>：{t.history.map((h) => `${fmtTime(h.at)} ${h.by} ${h.action}`).join('；')}</div>
+                        {t.alert?.hops?.length ? <div style={{ gridColumn: '1 / span 2' }}><b>P0 投递</b>：{t.alert.hops.map((h) => `${h.target}${h.ok ? ` 回执 ${h.receipt}` : ` 失败 ${h.error ?? ''}`}`).join(' → ')}</div> : null}
                       </div>
                     ),
                   }}
@@ -165,15 +174,17 @@ export default function Cases() {
                     { title: '会话', key: 'conv', ellipsis: true, render: (_, t) => <span>{t.conversation?.title ?? t.conversationId} <Tag style={{ marginLeft: 4 }}>{t.channel}</Tag></span> },
                     { title: '原因', dataIndex: 'reason', ellipsis: true },
                     { title: '预计响应', key: 'window', width: 220, render: (_, t) => <span style={{ color: overdue(t) ? '#cf1322' : undefined }}>{t.windowText}<br /><span style={{ fontSize: 12, color: overdue(t) ? '#cf1322' : '#6b7280' }}>{fmtTime(t.dueAt)}{overdue(t) ? ' · 超时' : ''}</span></span> },
-                    { title: '状态', dataIndex: 'status', width: 90, render: (v: HandoffTask['status']) => <Tag color={taskStatusMeta[v].color}>{taskStatusMeta[v].text}</Tag> },
+                    { title: '状态', dataIndex: 'status', width: 90, render: (v: HandoffTask['status'], t) => <Space size={2} wrap><Tag color={taskStatusMeta[v].color}>{taskStatusMeta[v].text}</Tag>{p0Alert(t)}</Space> },
                     { title: '认领人', dataIndex: 'claimedBy', width: 100, render: (v) => v ?? <Typography.Text type="secondary">—</Typography.Text> },
                     { title: '创建', dataIndex: 'createdAt', width: 150, render: fmtTime },
                     {
                       title: '操作',
                       key: 'ops',
-                      width: 260,
+                      width: 360,
                       render: (_, t) => (
                         <Space size={4} wrap>
+                          {t.status === 'pending' && t.priority === 'P0' && !t.alert?.ackAt && <Button size="small" loading={busy === `ack-${t.id}`} onClick={() => run(`ack-${t.id}`, () => api(`/api/oncall/alerts/${t.id}/ack`, { method: 'POST' }), '已确认 P0 告警')}>确认告警</Button>}
+                          {isAdmin && t.status === 'pending' && t.priority === 'P0' && !t.alert?.ackAt && <Button size="small" loading={busy === `esc-${t.id}`} onClick={() => run(`esc-${t.id}`, () => api(`/api/oncall/alerts/${t.id}/escalate`, { method: 'POST' }), '已升级下一跳')}>立即升级</Button>}
                           {t.status === 'pending' && <Button size="small" type="primary" icon={<UserSwitchOutlined />} loading={busy === `claim-${t.id}`} onClick={() => claim(t)}>认领并接管</Button>}
                           {t.status === 'claimed' && <Button size="small" onClick={() => nav(`/reception/online?conv=${t.conversationId}`)}>打开会话</Button>}
                           {t.status === 'claimed' && <Button size="small" onClick={() => run(`done-${t.id}`, () => api(`/api/handoffs/${t.id}/done`, { method: 'POST', body: { note: '' } }), '接续已完成')}>完成</Button>}

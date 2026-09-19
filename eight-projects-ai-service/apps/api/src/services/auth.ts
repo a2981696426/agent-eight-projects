@@ -70,6 +70,8 @@ const RULES: { methods: string[]; re: RegExp; roles: Role[]; label: string }[] =
   { methods: ['POST'], re: /^\/api\/dms\/(simulate|mock|retry-pending)/, roles: ['admin'], label: 'DMS 适配器管理' },
   { methods: ['GET'], re: /^\/api\/channels\/wechat\/mock\//, roles: ['admin'], label: '渠道模拟记录' },
   { methods: ['POST', 'PATCH'], re: /^\/api\/(cases|handoffs)/, roles: ['admin', 'agent'], label: '子案件与接续任务处理' },
+  { methods: ['POST'], re: /^\/api\/oncall\/alerts\/[^/]+\/ack$/, roles: ['admin', 'agent'], label: '确认 P0 轮值告警' },
+  { methods: ['POST'], re: /^\/api\/oncall\/alerts\/[^/]+\/escalate$/, roles: ['admin'], label: '立即升级 P0 告警' },
   { methods: ['POST', 'PUT'], re: /^\/api\/(ivr|outbound)\//, roles: ['admin', 'agent'], label: '机器人与外呼配置' },
   { methods: ['POST'], re: /^\/api\/aigc\//, roles: ['admin', 'agent', 'analyst'], label: 'AIGC' },
   { methods: ['POST'], re: /^\/api\/employees\//, roles: ['admin', 'agent'], label: '数字员工试跑' },
