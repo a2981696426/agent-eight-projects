@@ -19,6 +19,10 @@ for (const candidate of [resolve(ROOT_DIR, '.env'), resolve(here, '../.env')]) {
 export const env = {
   apiPort: Number(process.env.API_PORT ?? 8787),
   dataDir: resolve(here, '..', process.env.DATA_DIR ?? '../../data'),
+  /** 非空 → pg 连接 PostgreSQL；空 → PGlite 进程内 Postgres（本机/测试零依赖） */
+  databaseUrl: process.env.DATABASE_URL ?? '',
+  /** PGlite 数据目录；DATA_DIR=:memory: 时为 null（内存库） */
+  pgliteDir: process.env.DATA_DIR === ':memory:' ? null : resolve(here, '..', process.env.DATA_DIR ?? '../../data', 'pglite'),
   /** 生产模式：API 托管 apps/web/dist（单端口部署） */
   serveWeb: process.env.SERVE_WEB === '1' || process.env.NODE_ENV === 'production',
   webDist: resolve(ROOT_DIR, 'apps/web/dist'),
