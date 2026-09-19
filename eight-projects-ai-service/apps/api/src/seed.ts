@@ -1,6 +1,7 @@
 import { chunkText } from '@eight/agent-core';
 import type { AgentConfig, IvrFlow, OutboundCampaign, QualityRule } from '@eight/shared';
 import { J, initDb, nowIso, openDb, uid } from './db.ts';
+import { calendarFromEnv, computeWindow } from './services/handoff.ts';
 
 const daysAgo = (n: number, h = 10) => {
   const d = new Date();
@@ -23,7 +24,7 @@ export const DEFAULT_AGENT: AgentConfig = {
   maxAutoRisk: 'L1',
   retrieval: { topK: 5, minScore: 0.22, rewriteOnMiss: true },
   handoffRules: { keywords: ['投诉', '12315', '律师', '曝光'], maxBotTurns: 6 },
-  tools: ['crm.lookupCustomer', 'orders.lookup', 'logistics.track', 'invoices.lookup', 'refunds.lookup', 'pricing.priceDifference', 'catalog.search', 'tickets.create'],
+  tools: ['crm.lookupCustomer', 'orders.lookup', 'logistics.track', 'invoices.lookup', 'refunds.lookup', 'pricing.priceDifference', 'catalog.search', 'cases.create'],
   updatedAt: nowIso(),
 };
 
@@ -159,7 +160,7 @@ export async function seed(force = false) {
   const db = openDb();
   if (!force && (await db.count('customers')) > 0) return { seeded: false };
   await db.tx(async (tx) => {
-    for (const t of ['customers', 'orders', 'logistics', 'invoices', 'refunds', 'conversations', 'messages', 'traces', 'tickets', 'knowledge_docs', 'knowledge_chunks', 'agents', 'agent_versions', 'quality_rules', 'quality_results', 'voc_items', 'ivr_flows', 'campaigns', 'saved_reports', 'aigc_jobs', 'benchmark_cases', 'benchmark_runs', 'audit_log', 'employee_runs']) await tx.run(`DELETE FROM ${t}`);
+    for (const t of ['customers', 'orders', 'logistics', 'invoices', 'refunds', 'conversations', 'messages', 'traces', 'cases', 'handoff_tasks', 'dms_mock_tickets', 'knowledge_docs', 'knowledge_chunks', 'agents', 'agent_versions', 'quality_rules', 'quality_results', 'voc_items', 'ivr_flows', 'campaigns', 'saved_reports', 'aigc_jobs', 'benchmark_cases', 'benchmark_runs', 'audit_log', 'employee_runs']) await tx.run(`DELETE FROM ${t}`);
 
     const customers = [
       ['cust-001', '张伟', '13812340001', 'vip', 'taobao', ['复购', '糖友'], '2 次复购，偏好顺丰'],
@@ -270,14 +271,36 @@ export async function seed(force = false) {
       await tx.run('UPDATE conversations SET last_message_at=? WHERE id=?', last, c.id);
     }
 
-    // 工单
-    const tickets = [
-      ['TK-2026-0901', '物流停滞催件', '物流', 'processing', 'P2', 'conv-001', 'cust-001', '张伟', '物流专员', '订单 20260918000123 武汉转运中心停滞 3 天，已联系顺丰。', daysLater(1), daysAgo(1), daysAgo(0), 'chain'],
-      ['TK-2026-0902', '发票换开：个人→公司', '发票', 'resolved', 'P2', 'conv-002', 'cust-002', '李娜', '财务小周', '换开为上海云帆科技有限公司，税号 91310115MA1K3XYZ00。', daysAgo(1), daysAgo(3), daysAgo(2), 'agent'],
-      ['TK-2026-0903', '退差价申请 20 元', '退款', 'pending', 'P2', 'conv-003', 'cust-004', '刘洋', null, '订单 20260910000321 保价期内降价 20 元，待主管审核。', daysLater(2), daysAgo(0), daysAgo(0), 'chain'],
-      ['TK-2026-0904', '投诉：退款超时', '投诉', 'processing', 'P1', 'conv-004', 'cust-006', '赵敏', '主管王琳', '退货件已签收，验货中，用户投诉处理慢。', daysLater(0), daysAgo(0), daysAgo(0), 'agent'],
-    ] as const;
-    for (const t of tickets) await tx.run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...(t as unknown as (string | null)[]), J.str([{ at: t[11], by: t[13] === 'chain' ? '执行链' : t[8] ?? '系统', action: '创建工单' }]));
+    // 子案件（正式售后工单在 DMS；本地只有 待人工/处理中/已关联 DMS/已归档）
+    const evidence = (slots: Record<string, string>, facts: { tool: string; summary: string }[]) => J.str({ slots, facts, traceIds: [], candidateReply: null });
+    const caseRows: [string, string, string, string, string, string, string, string, string | null, string, string, string, string | null, string | null, string | null, number, string | null, string, string][] = [
+      // id, title, type, status, priority, conv, cust, custName, assignee, description, evidence, source, dms_no, dms_status, dms_synced_at, dms_pending, dms_last_error, created, updated
+      ['CS-2026-0901', '物流停滞催件', '物流', 'in_progress', 'P2', 'conv-001', 'cust-001', '张伟', '客服小欧', '订单 20260918000123 武汉转运中心停滞 3 天，已联系顺丰。', evidence({ orderId: '20260918000123' }, [{ tool: 'logistics.track', summary: '武汉转运中心停滞 72h+' }]), 'chain', null, null, null, 0, null, daysAgo(1), daysAgo(0)],
+      ['CS-2026-0902', '发票换开：个人→公司', '发票', 'linked_dms', 'P2', 'conv-002', 'cust-002', '李娜', '财务小周', '换开为上海云帆科技有限公司，税号 91310115MA1K3XYZ00。', evidence({ orderId: '20260915000456' }, [{ tool: 'invoices.lookup', summary: '已开电子普通发票，抬头个人' }]), 'agent', 'DMS-20260916-0001', 'resolved', daysAgo(1), 0, null, daysAgo(3), daysAgo(1)],
+      ['CS-2026-0903', '退差价申请 20 元', '退款', 'pending_human', 'P2', 'conv-003', 'cust-004', '刘洋', null, '订单 20260910000321 保价期内降价 20 元，待主管审核。', evidence({ orderId: '20260910000321' }, [{ tool: 'pricing.priceDifference', summary: '保价期内，差价 20 元' }]), 'chain', null, null, null, 1, 'DMS 不可用（演示数据）', daysAgo(0), daysAgo(0)],
+      ['CS-2026-0904', '投诉：退款超时', '投诉', 'in_progress', 'P1', 'conv-004', 'cust-006', '赵敏', '主管王琳', '退货件已签收，验货中，用户投诉处理慢。', evidence({ orderId: '20260912000987' }, [{ tool: 'refunds.lookup', summary: '退货件已签收，验货中' }]), 'agent', null, null, null, 0, null, daysAgo(0), daysAgo(0)],
+    ];
+    for (const c of caseRows) await tx.run('INSERT INTO cases VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ...c, J.str([{ at: c[17], by: c[11] === 'chain' ? '执行链' : c[8] ?? '系统', action: '创建子案件' }]));
+    await tx.run('INSERT INTO dms_mock_tickets VALUES (?,?,?,?,?,?,?)', 'DMS-20260916-0001', 'CS-2026-0902', 'CS-2026-0902', J.str({ title: '发票换开：个人→公司', type: '发票' }), 'resolved', daysAgo(3), daysAgo(1));
+
+    // 人工接续任务（内部待办，不是 DMS 工单）
+    const cal = calendarFromEnv();
+    const t1Created = daysAgo(0, 9);
+    const w1 = computeWindow('P2', new Date(t1Created), cal);
+    await tx.run(
+      'INSERT INTO handoff_tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'HT-seed-0001', 'conv-003', 'CS-2026-0903', 'douyin', 'P2', 'pending', '涉及资金动作（退差价），需人工确认',
+      J.str({ doneStages: ['intake', 'intent', 'evidence', 'knowledge', 'reasoning', 'risk', 'autonomy'], evidence: ['tool:pricing.priceDifference'], missing: [], candidate: '您的订单参加了 30 天保价，差价 20 元符合申请条件，人工审核后原路退回。', failure: null, nextAction: '核实候选话术后发送并发起退差价' }),
+      null, w1.text, w1.dueAt, t1Created, null, null, null, null, J.str([{ at: t1Created, by: '执行链', action: '创建人工接续任务' }]),
+    );
+    const t2Created = daysAgo(0, 9);
+    const w2 = computeWindow('P1', new Date(t2Created), cal);
+    await tx.run(
+      'INSERT INTO handoff_tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'HT-seed-0002', 'conv-004', 'CS-2026-0904', 'web', 'P1', 'claimed', '风险 L3：投诉类，直接升级',
+      J.str({ doneStages: ['intake', 'intent', 'evidence', 'knowledge', 'reasoning', 'risk', 'autonomy'], evidence: ['tool:refunds.lookup'], missing: [], candidate: null, failure: null, nextAction: '接续会话并处理诉求' }),
+      null, w2.text, w2.dueAt, t2Created, '主管王琳', daysAgo(0, 9), null, null, J.str([{ at: t2Created, by: '执行链', action: '创建人工接续任务' }, { at: daysAgo(0, 9), by: '主管王琳', action: '认领并接管会话' }]),
+    );
 
     // 质检规则
     const rules: QualityRule[] = [

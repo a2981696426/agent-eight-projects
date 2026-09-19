@@ -168,7 +168,12 @@ CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, conversation_id TEXT, r
 CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, at);
 CREATE TABLE IF NOT EXISTS traces(id TEXT PRIMARY KEY, conversation_id TEXT, agent_id TEXT, agent_version INTEGER, created_at TEXT, scenario TEXT, intent TEXT, decision TEXT, risk_level TEXT, duration_ms INTEGER, status TEXT, doc TEXT, degraded INTEGER DEFAULT 0, failed_over INTEGER DEFAULT 0, llm_calls INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_traces_conv ON traces(conversation_id, created_at);
-CREATE TABLE IF NOT EXISTS tickets(id TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, priority TEXT, conversation_id TEXT, customer_id TEXT, customer_name TEXT, assignee TEXT, description TEXT, sla_due_at TEXT, created_at TEXT, updated_at TEXT, source TEXT, history TEXT);
+CREATE TABLE IF NOT EXISTS cases(id TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, priority TEXT, conversation_id TEXT, customer_id TEXT, customer_name TEXT, assignee TEXT, description TEXT, evidence TEXT, source TEXT, dms_ticket_no TEXT, dms_status TEXT, dms_synced_at TEXT, dms_pending INTEGER DEFAULT 0, dms_last_error TEXT, created_at TEXT, updated_at TEXT, history TEXT);
+CREATE INDEX IF NOT EXISTS idx_cases_conv ON cases(conversation_id);
+CREATE TABLE IF NOT EXISTS handoff_tasks(id TEXT PRIMARY KEY, conversation_id TEXT, case_id TEXT, channel TEXT, priority TEXT, status TEXT, reason TEXT, progress TEXT, trace_id TEXT, window_text TEXT, due_at TEXT, created_at TEXT, claimed_by TEXT, claimed_at TEXT, done_at TEXT, alert TEXT, history TEXT);
+CREATE INDEX IF NOT EXISTS idx_handoff_conv ON handoff_tasks(conversation_id, status);
+CREATE TABLE IF NOT EXISTS dms_mock_tickets(ticket_no TEXT PRIMARY KEY, idem_key TEXT UNIQUE, case_id TEXT, payload TEXT, status TEXT, created_at TEXT, updated_at TEXT);
+DROP TABLE IF EXISTS tickets;
 CREATE TABLE IF NOT EXISTS knowledge_docs(id TEXT PRIMARY KEY, title TEXT, category TEXT, tags TEXT, content TEXT, status TEXT, version INTEGER, updated_at TEXT, source TEXT);
 CREATE TABLE IF NOT EXISTS knowledge_chunks(id TEXT PRIMARY KEY, doc_id TEXT, seq INTEGER, text TEXT, tags TEXT);
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON knowledge_chunks(doc_id);

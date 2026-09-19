@@ -234,23 +234,82 @@ export interface AgentConfig {
   updatedAt: string;
 }
 
-export interface Ticket {
+/* ───────────── 子案件 / 人工接续任务 / DMS（CS-003、CS-008E/G/I、CS-016） ───────────── */
+
+/** 子案件本地状态：待人工 / 处理中 / 已关联 DMS / 已归档。正式售后状态只在 DMS。 */
+export type CaseStatus = 'pending_human' | 'in_progress' | 'linked_dms' | 'archived';
+export interface CaseEvidence {
+  slots: Record<string, string>;
+  facts: { tool: string; summary: string }[];
+  traceIds: string[];
+  candidateReply: string | null;
+}
+export interface HistoryEntry {
+  at: string;
+  by: string;
+  action: string;
+  note?: string;
+}
+/** 子案件：从一次客户互动拆出的单一服务目标；不是正式售后工单。 */
+export interface SubCase {
   id: string;
   title: string;
   type: string;
-  status: 'open' | 'processing' | 'pending' | 'resolved' | 'closed';
+  status: CaseStatus;
   priority: Priority;
   conversationId: string | null;
   customerId: string | null;
   customerName: string;
   assignee: string | null;
   description: string;
-  slaDueAt: string;
+  evidence: CaseEvidence;
+  source: 'manual' | 'agent' | 'chain';
+  /** DMS 回读值；pending=true 即「待同步案件」 */
+  dms: { ticketNo: string | null; status: string | null; syncedAt: string | null; pending: boolean; lastError: string | null };
   createdAt: string;
   updatedAt: string;
-  source: 'manual' | 'agent' | 'chain';
-  history: { at: string; by: string; action: string; note?: string }[];
+  history: HistoryEntry[];
 }
+
+export type HandoffStatus = 'pending' | 'claimed' | 'done' | 'cancelled';
+export interface HandoffProgress {
+  doneStages: string[];
+  evidence: string[];
+  missing: string[];
+  candidate: string | null;
+  failure: string | null;
+  nextAction: string;
+}
+/** 人工接续任务：Agent 无法完成或处理到一半时创建的内部待办，关联会话与子案件，不是 DMS 工单。 */
+export interface HandoffTask {
+  id: string;
+  conversationId: string;
+  caseId: string | null;
+  channel: string;
+  priority: Priority;
+  status: HandoffStatus;
+  reason: string;
+  progress: HandoffProgress;
+  traceId: string | null;
+  /** 预计人工响应时窗文案（只表示预计开始接续，不是完成承诺） */
+  windowText: string;
+  dueAt: string;
+  createdAt: string;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  doneAt: string | null;
+  alert: { deliveredAt: string | null; ackAt: string | null } | null;
+  history: HistoryEntry[];
+}
+
+export type DmsFailure = 'unavailable' | 'rejected' | 'not_found' | 'account_cancelled';
+export type DmsTicketStatus = 'received' | 'processing' | 'resolved' | 'closed';
+export interface DmsTicket {
+  ticketNo: string;
+  status: DmsTicketStatus;
+  updatedAt: string;
+}
+export type DmsMockMode = 'normal' | 'unavailable' | 'reject' | 'account_cancelled' | 'slow';
 
 export interface KnowledgeDoc {
   id: string;
