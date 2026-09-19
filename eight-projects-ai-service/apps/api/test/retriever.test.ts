@@ -44,15 +44,17 @@ test('VectorStore：count / query 返回最相似块 / deleteDoc', async () => {
   assert.equal(await store.count(), 3);
 });
 
-test('HybridRetriever：mode=hybrid，融合分含 lexical/semantic 分量，且按 0.4/0.6 加权', async () => {
+test('HybridRetriever：mode=hybrid，融合分 = min(1, 词法 + 0.6×语义)，词法满分不被稀释', async () => {
   const r = new HybridRetriever(bm25, store, provider);
   assert.equal(r.mode, 'hybrid');
   const hits = await r.search('传感器淋浴时能不能戴', { topK: 3 });
   assert.equal(hits[0].chunkId, 'c-water');
   const h = hits[0];
   assert.ok((h.semantic ?? 0) > 0);
-  const expected = 0.4 * (h.lexical ?? 0) + 0.6 * (h.semantic ?? 0);
+  const expected = Math.min(1, (h.lexical ?? 0) + 0.6 * (h.semantic ?? 0));
   assert.ok(Math.abs(h.score - expected) < 0.01, `score=${h.score} expected≈${expected}`);
+  const exact = await r.search('开票 90 天内支持换开抬头', { topK: 1 });
+  assert.ok(exact[0].score >= (exact[0].lexical ?? 0), '词法分不得因融合下降');
 });
 
 test('HybridRetriever：minScore 过滤与 topK 生效；tags 软加权不改变排序方向', async () => {

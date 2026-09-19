@@ -4,7 +4,7 @@ import { nowIso, openDb } from '../db.ts';
 import { scrubForEmbedding, type EmbeddingProvider } from './embeddings.ts';
 
 /**
- * 混合检索（CS-017）：BM25（词法）+ pgvector（语义）并行，按 0.4 / 0.6 加权融合；
+ * 混合检索（CS-017）：BM25（词法）+ pgvector（语义）并行，融合分 = min(1, 词法 + 0.6 × 语义)；
  * 供应商失败进入短暂熔断，期间退回纯 BM25——检索模式在 trace 中可见（mode）。
  */
 const db = () => openDb();
@@ -77,7 +77,7 @@ export class HybridRetriever implements Retriever {
     readonly provider: EmbeddingProvider | null,
     opts: HybridOptions = {},
   ) {
-    this.w = { lexical: opts.lexicalWeight ?? 0.4, semantic: opts.semanticWeight ?? 0.6 };
+    this.w = { lexical: opts.lexicalWeight ?? 1, semantic: opts.semanticWeight ?? 0.6 };
     this.cooldownMs = opts.cooldownMs ?? 60_000;
     this.embedTimeoutMs = opts.embedTimeoutMs ?? 2500;
     this.lastMode = store && provider ? 'hybrid' : 'bm25';
@@ -128,6 +128,9 @@ export class HybridRetriever implements Retriever {
     }
     const out: KnowledgeHit[] = [];
     for (const h of merged.values()) {
+      // 融合 = 词法基线 + 语义增益（上限 1）：词法满分不因语义分量偏低而被稀释（保持 minScore 语义与四维可信度口径），
+      // 只在语义侧命中的同义问句以 semanticWeight × 余弦相似度进入候选。
+      // 备注：固定加权 0.4/0.6 在离线对比中把词法满分压到 0.45～0.66，会误触检索改写与"售前无知识"风险，故改为增益式。
       let score = this.w.lexical * (h.lexical ?? 0) + this.w.semantic * (h.semantic ?? 0);
       // 场景包标签软加权，与 BM25 一致（BM25 分量已加权，这里只对纯语义命中补偿）
       if ((h.lexical ?? 0) === 0 && opts.tags?.length && h.tags.some((t) => opts.tags!.includes(t))) score *= 1.15;

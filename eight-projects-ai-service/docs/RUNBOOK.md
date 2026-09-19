@@ -58,7 +58,14 @@ docker compose stop           # 停止；数据在 pgdata 卷中保留
 - 排查：`SELECT name, state, count(*) FROM pgboss.job GROUP BY 1,2;`（生产 PostgreSQL）；失败任务保留 14 天，`retry` 状态表示等待退避重试。
 - 发送失败不会重试的情况（48 小时窗口过期、被拒绝）会在会话里追加系统消息，坐席可见。
 
-## 8. 本机开发对照
+## 8. 知识库迁移与向量检索
+
+- 云商知识库迁移：云商后台导出知识（Excel）→ 另存为「CSV UTF-8」→ Mind Studio「批量导入」选「FAQ CSV（云商导出）」上传，勾选「导入后直接发布」；表头自动映射（标准问 / 答案 / 相似问 / 分类 / 标签）。
+- 向量供应商：`.env` 设 `EMBEDDING_PROVIDER=hunyuan`（同云首选）与 `EMBEDDING_API_KEY`（混元 OpenAI 兼容 Key）；备用 `bailian`。重启后启动作业自动补齐缺失向量；`GET /api/knowledge/stats` 的 `vectors.coverage` 到 1.0 即完成。
+- 换供应商 / 维度：改 `.env` → 若维度变化需在数据库执行 `DROP TABLE knowledge_vectors;` 后重启（表按 `EMBEDDING_DIMS` 重建）→ `POST /api/knowledge/reindex-vectors`（管理员）。
+- 供应商故障：检索自动退回 BM25（trace 第 5 阶段 `mode=bm25`），60 s 后自动重试；无需人工干预。
+
+## 9. 本机开发对照
 
 - 不设 `DATABASE_URL` → PGlite 进程内 Postgres，数据在 `data/pglite/`，删除该目录即重置并重新 seed。
 - `DATA_DIR=:memory:` → 纯内存库（单测使用）。

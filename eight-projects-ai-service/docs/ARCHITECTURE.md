@@ -54,6 +54,14 @@
 - **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 含 `postgres`（`pgvector/pgvector:pg16`，healthcheck）与 `ai-service`，读取 `.env`。
 - **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
 
+## 知识检索（L13，CS-017）
+
+- **检索器契约**：`agent-core` 的 `Retriever { size, mode, search() }`，`BM25Index` 与宿主的 `HybridRetriever`（`services/retriever.ts`）都实现它，执行链 `ChainContext.index` 注入后者；trace 第 4 阶段 detail 记录 `mode: 'bm25' | 'hybrid'`。
+- **向量**：`knowledge_vectors(chunk_id, provider, model, dims, embedding vector(N))`（pgvector，PGlite 与 `pgvector/pgvector:pg16` 都可用）；`services/embeddings.ts` 的 `EmbeddingProvider`——OpenAI 兼容实现（首选混元 `hunyuan-embedding` 1024 维，备用百炼 `text-embedding-v4`）与确定性 Mock（词法哈希，离线用）。向量化前 `scrubForEmbedding` 脱敏（手机号 / 订单号 / 序列号 / 邮箱）。
+- **融合**：BM25 与向量并行；`score = min(1, 词法 + 0.6 × 余弦相似度)`——词法基线 + 语义增益，词法满分不被稀释（离线对比显示固定 0.4/0.6 加权会把满分压到 0.45～0.66，误触改写与"售前无知识"风险）；只在语义侧命中的同义问句以 0.6×sim 进入候选。供应商失败 60 s 熔断，期间退回纯 BM25。
+- **向量化作业**：pg-boss `knowledge.embed`（发布 / 重切块 / 导入后入队；启动时补齐缺失块）；`POST /api/knowledge/reindex-vectors`（管理员）换供应商后全量重建；`/api/knowledge/stats.vectors` 报 provider / model / count / coverage / mode。
+- **导入**：`/api/knowledge/import` 支持 `text`、`faq-csv`（云商导出：标准问 / 答案 / 相似问 / 分类 / 标签，中英表头自动映射，相似问写入正文）、`faq-json`；Mind Studio 提供格式选择与文件上传。
+
 ## 渠道接入（L12，CS-012 / CS-014）
 
 - **渠道适配器契约**（`services/channels.ts`）：`ChannelAdapter { channel, capabilities, send(externalUserId, text), health() }`。适配器只做协议、授权、限流、会话与错误语义；意图、知识、规则与回复决策全部在统一客服 Agent。入站以 `(channel, externalMsgId)` 幂等（`channel_messages`），外部身份映射到演示客户档案（`channel_identities`，不与 UMS/佩戴用户合并），24 小时内未结束的同渠道会话复用；机器人接待走执行链，人工接待只落库（单一响应者）。投递结果如实写回 `messages.meta.delivery`（`sent / failed / skipped / queued`），不伪造送达。
@@ -91,6 +99,6 @@
 ## 已知边界
 
 - 呼叫中心、视频客服按规划暂缓；呼入机器人与 AI 外呼没有真实线路，分别用文本模拟来电和大模型模拟外呼结果。
-- 检索为词法（BM25 + 二元组 + 改写重检），未接向量库；知识规模上千段后建议引入 embedding 混合召回。
+- 混合检索的语义分量在本机/e2e 用的是词法哈希 Mock 向量，只验证链路不代表真实召回；真实效果需配置混元/百炼后用真实用例复测。
 - 单机 PostgreSQL，无多租户；账号体系为三角色本地用户，审计只有 `audit_log` 记录。
 - 大模型输出存在非确定性；Benchmark 用于观察版本间趋势，不是一次通过即宣称能力成熟。
