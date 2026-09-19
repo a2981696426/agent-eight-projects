@@ -229,7 +229,8 @@ export async function managementRoutes(app: FastifyInstance) {
     const sentiment = await d.all<{ sentiment: string; n: number }>('SELECT sentiment, COUNT(*) n FROM voc_items GROUP BY sentiment');
     const kw: Record<string, number> = {};
     for (const r of await d.all<{ keywords: string }>('SELECT keywords FROM voc_items')) for (const k of J.parse<string[]>(r.keywords, [])) kw[k] = (kw[k] ?? 0) + 1;
-    const trend = await d.all<{ day: string; n: number; neg: number }>("SELECT substr(created_at,1,10) day, COUNT(*) n, SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) neg FROM voc_items GROUP BY day ORDER BY day");
+    // day 在 Postgres 中不能作裸别名（时间单位关键字），用 AS + 显式分组表达式
+    const trend = await d.all<{ day: string; n: number; neg: number }>("SELECT substr(created_at,1,10) AS day, COUNT(*) n, SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) neg FROM voc_items GROUP BY substr(created_at,1,10) ORDER BY substr(created_at,1,10)");
     const pending = (await d.get<{ n: number }>("SELECT COUNT(*) n FROM messages m LEFT JOIN voc_items v ON v.message_id=m.id WHERE m.role='user' AND v.id IS NULL AND length(m.text) >= 4"))?.n ?? 0;
     return { total: await d.count('voc_items'), pending, topics, sentiment, keywords: Object.entries(kw).map(([k, n]) => ({ k, n })).sort((a, b) => b.n - a.n).slice(0, 40), trend, alerts: topics.filter((t) => t.n >= 2 && t.neg / t.n >= 0.5).map((t) => ({ topic: t.topic, negativeRatio: Number((t.neg / t.n).toFixed(2)), n: t.n })) };
   });

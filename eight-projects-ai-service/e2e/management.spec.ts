@@ -25,9 +25,11 @@ test.describe('服务管理与数字员工', () => {
     await page.getByTitle('数据集：执行链').click();
     await page.getByRole('button', { name: '运行报表' }).click();
     await expect(page.locator('.ant-card-head-title').filter({ hasText: /执行链 ·/ })).toBeVisible();
-    await page.getByPlaceholder('保存为…').fill('e2e 执行链场景报表');
+    // 数据库跨轮次持久化，用唯一名称避免与历史保存项撞名
+    const reportName = `e2e 执行链场景报表 ${Date.now().toString(36)}`;
+    await page.getByPlaceholder('保存为…').fill(reportName);
     await page.getByRole('button', { name: '保存' }).click();
-    await expect(page.getByText('e2e 执行链场景报表')).toBeVisible();
+    await expect(page.getByText(reportName)).toBeVisible();
     await page.screenshot({ path: shot('reports') });
     w.assertClean('reports');
   });

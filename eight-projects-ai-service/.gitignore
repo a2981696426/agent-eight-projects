@@ -5,6 +5,7 @@ dist/
 !.env.example
 data/*.sqlite
 data/*.sqlite-*
+data/pglite/
 test-results/
 playwright-report/
 e2e/.auth/
