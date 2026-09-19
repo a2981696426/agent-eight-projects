@@ -45,6 +45,9 @@ html, body, #root { height: 100%; margin: 0; background: #f5f7fa; }
 
 /* ───────── 独立访客端 ───────── */
 .visitor-bg { min-height: 100vh; background: linear-gradient(160deg, #eef3ff 0%, #f7f8fb 50%, #eefbf5 100%); display: flex; align-items: center; justify-content: center; padding: 20px; }
+/* 嵌入模式（官网 iframe）：无背景、占满 iframe */
+.visitor-bg.embed { min-height: 100vh; height: 100vh; background: #fff; padding: 0; align-items: stretch; }
+.visitor-bg.embed .visitor-widget { width: 100%; height: 100vh; border-radius: 0; box-shadow: none; }
 .visitor-widget { width: 440px; max-width: 100%; height: min(760px, calc(100vh - 40px)); background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(15, 31, 61, .18); display: flex; flex-direction: column; overflow: hidden; }
 .visitor-head { background: linear-gradient(135deg, #1f6feb, #3b82f6); color: #fff; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; }
 .visitor-head .brand { display: flex; align-items: center; gap: 10px; }

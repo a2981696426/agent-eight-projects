@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>官网嵌入演示 · 欧态在线客服</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; color: #1f2937; background: #f8fafc; }
+      header { background: #0f172a; color: #fff; padding: 18px 32px; font-weight: 600; }
+      main { max-width: 860px; margin: 40px auto; padding: 0 20px; line-height: 1.7; }
+      .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 6px 24px rgba(15, 23, 42, .06); margin-bottom: 16px; }
+      code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <header>欧态官网（演示页）</header>
+    <main>
+      <div class="card">
+        <h2>M8 动态血糖仪传感器</h2>
+        <p>这是一个模拟的官网商品页。右下角的浮动按钮由 <code>/embed.js</code> 注入，点击后以 iframe 打开同一套访客端（<code>/visitor?embed=1&amp;channel=web</code>），机器人 / 人工回复与工作台完全一致。</p>
+        <p>接入只需一行：<code>&lt;script src="https://你的域名/embed.js" data-title="欧态在线客服" data-site="official-site"&gt;&lt;/script&gt;</code></p>
+        <p>也可以用 <code>window.EightChat.open()</code> 在任意按钮上唤起。</p>
+      </div>
+      <div class="card">
+        <h3>常见问题</h3>
+        <p>传感器防水吗？手机适配范围？发票怎么开？直接点右下角问智能客服。</p>
+      </div>
+    </main>
+    <script src="/embed.js" data-title="欧态在线客服" data-site="embed-demo"></script>
+  </body>
+</html>

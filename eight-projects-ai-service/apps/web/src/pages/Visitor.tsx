@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { App, Button, Input, Rate, Select, Space, Tag, Tooltip } from 'antd';
 import { CustomerServiceOutlined, PlusOutlined, RobotOutlined, SendOutlined, UserOutlined } from '@ant-design/icons';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { Conversation, Customer, Message } from '@eight/shared';
 import { api, fmtShort, streamChat, type StageProgress } from '../api';
 
@@ -22,10 +22,14 @@ interface Detail {
 export default function Visitor() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  // 嵌入模式（官网 embed.js 的 iframe）：无外框、匿名自动开始、渠道来自参数；导航时保留查询串
+  const embed = params.get('embed') === '1';
+  const embedQuery = embed ? `?${params.toString()}` : '';
   const { message } = App.useApp();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerId, setCustomerId] = useState<string | null>(null);
-  const [channel, setChannel] = useState('web');
+  const [channel, setChannel] = useState(params.get('channel') ?? 'web');
   const [detail, setDetail] = useState<Detail | null>(null);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -33,13 +37,19 @@ export default function Visitor() {
   const [rated, setRated] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
-  // 没有会话 ID 时尝试恢复上次会话
+  // 没有会话 ID 时尝试恢复上次会话；嵌入模式下无历史则匿名自动开始
+  const autoStarted = useRef(false);
   useEffect(() => {
     if (!id) {
       const last = localStorage.getItem(STORAGE_KEY);
-      if (last) nav(`/visitor/${last}`, { replace: true });
+      if (last) nav(`/visitor/${last}${embedQuery}`, { replace: true });
+      else if (embed && !autoStarted.current) {
+        autoStarted.current = true;
+        void start();
+      }
     }
-  }, [id, nav]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, nav, embed]);
   useEffect(() => {
     api<Customer[]>('/api/customers').then(setCustomers).catch(() => setCustomers([]));
   }, []);
@@ -53,10 +63,10 @@ export default function Visitor() {
     } catch (e) {
       if ((e as { status?: number }).status === 404) {
         localStorage.removeItem(STORAGE_KEY);
-        nav('/visitor', { replace: true });
+        nav(`/visitor${embedQuery}`, { replace: true });
       }
     }
-  }, [id, nav]);
+  }, [id, nav, embedQuery]);
   useEffect(() => {
     if (!id) {
       setDetail(null);
@@ -72,15 +82,17 @@ export default function Visitor() {
   }, [visible.length, sending]);
 
   async function start() {
-    const c = await api<Conversation>('/api/conversations', { method: 'POST', body: { channel, customerId, title: '访客咨询', mode: 'bot' } });
+    const site = params.get('site');
+    const c = await api<Conversation>('/api/conversations', { method: 'POST', body: { channel, customerId, title: site ? `官网访客 · ${site}` : '访客咨询', mode: 'bot' } });
     localStorage.setItem(STORAGE_KEY, c.id);
-    nav(`/visitor/${c.id}`);
+    nav(`/visitor/${c.id}${embedQuery}`);
   }
   function fresh() {
     localStorage.removeItem(STORAGE_KEY);
     setDetail(null);
     setRated(false);
-    nav('/visitor');
+    autoStarted.current = false;
+    nav(`/visitor${embedQuery}`);
   }
   async function send(t?: string) {
     const value = (t ?? text).trim();
@@ -111,7 +123,7 @@ export default function Visitor() {
   const status = !conv ? null : closed ? { text: '会话已结束', color: 'default' } : human ? (conv.status === 'waiting_human' ? { text: `排队等待人工客服${conv.priority ? ` · ${conv.priority}` : ''}`, color: 'orange' } : { text: `人工客服 ${conv.assignee ?? ''} 为您服务`, color: 'purple' }) : { text: '智能客服在线', color: 'green' };
 
   return (
-    <div className="visitor-bg">
+    <div className={`visitor-bg${embed ? ' embed' : ''}`}>
       <div className="visitor-widget">
         <div className="visitor-head">
           <div className="brand">
@@ -138,7 +150,7 @@ export default function Visitor() {
             <Select value={customerId} onChange={setCustomerId} allowClear placeholder="匿名访客" style={{ width: '100%' }} options={customers.map((c) => ({ value: c.id, label: `${c.name} · ${c.level} · ${c.phone}` }))} />
             <Select value={channel} onChange={setChannel} style={{ width: '100%', marginTop: 8 }} options={[['web', '官网网页'], ['app', '欧态健康 App'], ['wechat', '微信公众号'], ['taobao', '淘宝旗舰店'], ['douyin', '抖音小店'], ['jd', '京东旗舰店']].map(([v, l]) => ({ value: v, label: l }))} />
             <Button type="primary" block style={{ marginTop: 14 }} onClick={start}>开始咨询</Button>
-            <div className="visitor-foot">管理端入口：<Link to="/reception/online">在线客服工作台</Link> · <Link to="/ai/online-robot">执行链透视</Link></div>
+            {!embed && <div className="visitor-foot">管理端入口：<Link to="/reception/online">在线客服工作台</Link> · <Link to="/ai/online-robot">执行链透视</Link></div>}
           </div>
         ) : (
           <>
@@ -183,7 +195,7 @@ export default function Visitor() {
                 <Input value={text} onChange={(e) => setText(e.target.value)} onPressEnter={() => send()} disabled={closed || sending} placeholder={closed ? '会话已结束' : human ? '人工客服在线，请输入…' : '请输入您的问题…'} />
                 <Button type="primary" icon={<SendOutlined />} loading={sending} disabled={closed} onClick={() => send()}>发送</Button>
               </Space.Compact>
-              <div className="visitor-foot">由 AI 客服与人工客服共同为您服务 · 会话 {conv?.id ?? id}</div>
+              <div className="visitor-foot">由 AI 客服与人工客服共同为您服务{embed ? '' : ` · 会话 ${conv?.id ?? id}`}</div>
             </div>
           </>
         )}
