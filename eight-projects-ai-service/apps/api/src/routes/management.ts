@@ -111,22 +111,22 @@ export async function managementRoutes(app: FastifyInstance) {
   /* ───────────── 自定义报表 ───────────── */
   const DIMENSIONS: Record<ReportSpec['dataset'], Record<string, string>> = {
     conversations: { channel: '渠道', scenario: '场景', status: '状态', controller: '接待方', day: '日期', assignee: '坐席' },
-    tickets: { type: '类型', status: '状态', priority: '优先级', assignee: '处理人', day: '日期', source: '来源' },
+    cases: { type: '类型', status: '状态', priority: '优先级', assignee: '处理人', day: '日期', source: '来源' },
     traces: { scenario: '场景', decision: '决策', risk_level: '风险等级', day: '日期', status: '执行状态' },
     quality: { agent: '坐席', day: '日期' },
   };
   const METRICS: Record<ReportSpec['dataset'], Record<string, { label: string; sql: string }>> = {
     conversations: { count: { label: '会话数', sql: 'COUNT(*)' }, satisfaction: { label: '平均满意度', sql: 'ROUND(AVG(satisfaction),2)' }, bot_ratio: { label: '机器人接待占比', sql: "ROUND(AVG(CASE WHEN controller='bot' THEN 1.0 ELSE 0 END),3)" } },
-    tickets: { count: { label: '工单数', sql: 'COUNT(*)' }, resolved_ratio: { label: '解决率', sql: "ROUND(AVG(CASE WHEN status IN ('resolved','closed') THEN 1.0 ELSE 0 END),3)" } },
+    cases: { count: { label: '子案件数', sql: 'COUNT(*)' }, linked_ratio: { label: 'DMS 关联率', sql: "ROUND(AVG(CASE WHEN status='linked_dms' THEN 1.0 ELSE 0 END),3)" } },
     traces: { count: { label: '执行次数', sql: 'COUNT(*)' }, avg_ms: { label: '平均耗时(ms)', sql: 'ROUND(AVG(duration_ms))' }, auto_ratio: { label: '自主回复率', sql: "ROUND(AVG(CASE WHEN decision='auto_reply' THEN 1.0 ELSE 0 END),3)" } },
     quality: { count: { label: '质检数', sql: 'COUNT(*)' }, avg_score: { label: '平均分', sql: 'ROUND(AVG(score)::numeric,1)' } },
   };
-  const DATE_COL: Record<ReportSpec['dataset'], string> = { conversations: 'created_at', tickets: 'created_at', traces: 'created_at', quality: 'created_at' };
-  const TABLE: Record<ReportSpec['dataset'], string> = { conversations: 'conversations', tickets: 'tickets', traces: 'traces', quality: 'quality_results' };
+  const DATE_COL: Record<ReportSpec['dataset'], string> = { conversations: 'created_at', cases: 'created_at', traces: 'created_at', quality: 'created_at' };
+  const TABLE: Record<ReportSpec['dataset'], string> = { conversations: 'conversations', cases: 'cases', traces: 'traces', quality: 'quality_results' };
 
   app.get('/api/reports/options', async () => ({ datasets: Object.keys(DIMENSIONS).map((d) => ({ id: d, dimensions: Object.entries(DIMENSIONS[d as ReportSpec['dataset']]).map(([k, v]) => ({ id: k, label: v })), metrics: Object.entries(METRICS[d as ReportSpec['dataset']]).map(([k, v]) => ({ id: k, label: v.label })) })), saved: (await db().all('SELECT * FROM saved_reports ORDER BY created_at DESC')).map((r) => ({ ...r, spec: J.parse(r.spec, null) })) }));
   app.post('/api/reports/run', async (req, reply) => {
-    const spec = z.object({ dataset: z.enum(['conversations', 'tickets', 'traces', 'quality']), dimension: z.string(), metric: z.string(), dateFrom: z.string().optional(), dateTo: z.string().optional() }).parse(req.body);
+    const spec = z.object({ dataset: z.enum(['conversations', 'cases', 'traces', 'quality']), dimension: z.string(), metric: z.string(), dateFrom: z.string().optional(), dateTo: z.string().optional() }).parse(req.body);
     const dims = DIMENSIONS[spec.dataset];
     const met = METRICS[spec.dataset][spec.metric];
     if (!dims[spec.dimension] || !met) return reply.code(400).send({ error: '维度或指标无效' });
@@ -182,8 +182,9 @@ export async function managementRoutes(app: FastifyInstance) {
         conversationsTotal: await n('SELECT COUNT(*) n FROM conversations'),
         conversationsToday: await n('SELECT COUNT(*) n FROM conversations WHERE substr(created_at,1,10)=?', today),
         waitingHuman: await n("SELECT COUNT(*) n FROM conversations WHERE status='waiting_human'"),
-        openTickets: await n("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('resolved','closed')"),
-        overdueTickets: await n("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('resolved','closed') AND sla_due_at < ?", nowIso()),
+        pendingHandoffs: await n("SELECT COUNT(*) n FROM handoff_tasks WHERE status='pending'"),
+        overdueHandoffs: await n("SELECT COUNT(*) n FROM handoff_tasks WHERE status='pending' AND due_at < ?", nowIso()),
+        openCases: await n("SELECT COUNT(*) n FROM cases WHERE status <> 'archived'"),
         autoReplyRate: totalTraces ? Number((auto / totalTraces).toFixed(3)) : 0,
         avgChainMs: avgMs,
         avgSatisfaction: (await d.get<{ v: number }>('SELECT ROUND(AVG(satisfaction),2) v FROM conversations WHERE satisfaction IS NOT NULL'))?.v ?? 0,

@@ -394,7 +394,7 @@ export interface OutboundCampaign {
 }
 
 export interface ReportSpec {
-  dataset: 'conversations' | 'tickets' | 'traces' | 'quality';
+  dataset: 'conversations' | 'cases' | 'traces' | 'quality';
   dimension: string;
   metric: string;
   dateFrom?: string;

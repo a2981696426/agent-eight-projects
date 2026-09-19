@@ -41,7 +41,7 @@ export class MockDmsAdapter implements DmsAdapter {
   }
 
   private failure(): DmsResult<never> | null {
-    if (this.mode === 'unavailable') return { ok: false, kind: 'unavailable', message: 'DMS 连接超时（模拟）' };
+    if (this.mode === 'unavailable') return { ok: false, kind: 'unavailable', message: 'DMS 不可用：连接超时（模拟）' };
     if (this.mode === 'reject') return { ok: false, kind: 'rejected', message: 'DMS 拒绝建单：缺少必填字段 phone（模拟）' };
     if (this.mode === 'account_cancelled') return { ok: false, kind: 'account_cancelled', message: '激活账号已注销，DMS 拒绝展示/建单（模拟）' };
     return null;
@@ -68,7 +68,7 @@ export class MockDmsAdapter implements DmsAdapter {
 
   async getTicket(ticketNo: string): Promise<DmsResult<DmsTicket>> {
     if (this.mode === 'slow') await sleep(800);
-    if (this.mode === 'unavailable') return { ok: false, kind: 'unavailable', message: 'DMS 连接超时（模拟）' };
+    if (this.mode === 'unavailable') return { ok: false, kind: 'unavailable', message: 'DMS 不可用：连接超时（模拟）' };
     const row = await this.db().get('SELECT * FROM dms_mock_tickets WHERE ticket_no=?', ticketNo);
     if (!row) return { ok: false, kind: 'not_found', message: `DMS 中不存在工单 ${ticketNo}` };
     return { ok: true, data: this.toTicket(row) };

@@ -4,7 +4,7 @@ import { J, nowIso, openDb, uid } from '../db.ts';
 
 /**
  * 登录与角色权限（借鉴 AI 修图项目的 JWT httpOnly Cookie + 路由守卫，这里用服务端会话 + 签名 Cookie）。
- * 三角色：admin 管理员（全部）、agent 坐席（接待/工单/知识只读/AIGC）、analyst 质检与运营（质检/报表/大屏/VoC/知识维护）。
+ * 三角色：admin 管理员（全部）、agent 坐席（接待/子案件与接续任务/知识只读/AIGC）、analyst 质检与运营（质检/报表/大屏/VoC/知识维护）。
  */
 export type Role = 'admin' | 'agent' | 'analyst';
 export interface SessionUser {
@@ -62,8 +62,9 @@ const RULES: { methods: string[]; re: RegExp; roles: Role[]; label: string }[] =
   { methods: ['PUT', 'POST', 'PATCH'], re: /^\/api\/quality\//, roles: ['admin', 'analyst'], label: '质检' },
   { methods: ['POST', 'DELETE'], re: /^\/api\/reports\//, roles: ['admin', 'analyst'], label: '报表' },
   { methods: ['POST'], re: /^\/api\/voc\/(analyze|ask)$/, roles: ['admin', 'analyst'], label: '客户之声分析' },
-  { methods: ['POST'], re: /^\/api\/conversations\/[^/]+\/(control|assist|summary|classify|ticket)$/, roles: ['admin', 'agent'], label: '会话处理' },
-  { methods: ['POST', 'PATCH'], re: /^\/api\/tickets/, roles: ['admin', 'agent'], label: '工单处理' },
+  { methods: ['POST'], re: /^\/api\/conversations\/[^/]+\/(control|assist|summary|classify|case)$/, roles: ['admin', 'agent'], label: '会话处理' },
+  { methods: ['POST'], re: /^\/api\/dms\/(simulate|mock|retry-pending)/, roles: ['admin'], label: 'DMS 适配器管理' },
+  { methods: ['POST', 'PATCH'], re: /^\/api\/(cases|handoffs)/, roles: ['admin', 'agent'], label: '子案件与接续任务处理' },
   { methods: ['POST', 'PUT'], re: /^\/api\/(ivr|outbound)\//, roles: ['admin', 'agent'], label: '机器人与外呼配置' },
   { methods: ['POST'], re: /^\/api\/aigc\//, roles: ['admin', 'agent', 'analyst'], label: 'AIGC' },
   { methods: ['POST'], re: /^\/api\/employees\//, roles: ['admin', 'agent'], label: '数字员工试跑' },

@@ -11,7 +11,7 @@ import { seed } from './seed.ts';
 import { knowledgeIndex, llm, refreshIndex } from './services/chain.ts';
 import { installAuth, seedUsers } from './services/auth.ts';
 import { conversationRoutes } from './routes/conversations.ts';
-import { ticketRoutes } from './routes/tickets.ts';
+import { caseRoutes } from './routes/cases.ts';
 import { knowledgeRoutes } from './routes/knowledge.ts';
 import { agentRoutes } from './routes/agents.ts';
 import { aigcRoutes } from './routes/aigc.ts';
@@ -61,7 +61,8 @@ export async function buildServer() {
     return {
       conversations: await n('SELECT COUNT(*) n FROM conversations'),
       waitingHuman: await n("SELECT COUNT(*) n FROM conversations WHERE status='waiting_human'"),
-      tickets: await n("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('resolved','closed')"),
+      cases: await n("SELECT COUNT(*) n FROM cases WHERE status <> 'archived'"),
+      handoffsPending: await n("SELECT COUNT(*) n FROM handoff_tasks WHERE status='pending'"),
       traces: await n('SELECT COUNT(*) n FROM traces'),
       knowledge: await n("SELECT COUNT(*) n FROM knowledge_docs WHERE status='published'"),
       quality: await n('SELECT COUNT(*) n FROM quality_results'),
@@ -72,7 +73,7 @@ export async function buildServer() {
   });
 
   await app.register(conversationRoutes);
-  await app.register(ticketRoutes);
+  await app.register(caseRoutes);
   await app.register(knowledgeRoutes);
   await app.register(agentRoutes);
   await app.register(aigcRoutes);

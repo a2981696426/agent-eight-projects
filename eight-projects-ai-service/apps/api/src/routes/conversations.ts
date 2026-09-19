@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import type { Ticket } from '@eight/shared';
 import { J, nowIso, openDb, uid } from '../db.ts';
 import { appendMessage, loadCustomer, loadMessages, loadTrace, rowToConversation, runForConversation } from '../services/chain.ts';
 import { classify, summarize } from '../services/aigc.ts';
+import { activeTask, cancelActiveTasks, claimActiveTask, ensureHandoffTask } from '../services/handoff.ts';
+import { createCase, toCase } from './cases.ts';
 
 const db = () => openDb();
 const audit = (actor: string, action: string, target: string, detail: unknown = null) => db().run('INSERT INTO audit_log VALUES (?,?,?,?,?,?)', uid('al-'), nowIso(), actor, action, target, J.str(detail));
@@ -53,8 +54,9 @@ export async function conversationRoutes(app: FastifyInstance) {
     const customer = await loadCustomer(conversation.customerId);
     const orders = customer ? await db().all('SELECT id, product, status, paid_amount, created_at FROM orders WHERE customer_id=? ORDER BY created_at DESC', customer.id) : [];
     const traces = await db().all<{ id: string; created_at: string; scenario: string; intent: string; decision: string; risk_level: string; duration_ms: number; status: string }>('SELECT id, created_at, scenario, intent, decision, risk_level, duration_ms, status FROM traces WHERE conversation_id=? ORDER BY created_at DESC', id);
-    const tickets = await db().all('SELECT id, title, status, priority FROM tickets WHERE conversation_id=?', id);
-    return { conversation, messages, customer, orders, traces, tickets };
+    const cases = (await db().all('SELECT * FROM cases WHERE conversation_id=? ORDER BY created_at DESC', id)).map(toCase);
+    const handoffTask = await activeTask(id);
+    return { conversation, messages, customer, orders, traces, cases, handoffTask };
   });
 
   /** 发送消息：user 消息在机器人接待时触发执行链；agent 消息由坐席发送 */
@@ -143,6 +145,16 @@ export async function conversationRoutes(app: FastifyInstance) {
     await db().run(`UPDATE conversations SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, ...(keys.map((k) => patch[k]) as (string | null)[]), id);
     await appendMessage(id, 'system', `【${{ takeover: '人工接管', robot: '转回机器人', close: '会话结束', reopen: '重新打开', handoff: '转人工排队' }[body.action]}】${body.actor}${body.reason ? `：${body.reason}` : ''}`, { meta: { internal: true } });
     await audit(body.actor, `conversation.${body.action}`, id, body);
+    // 人工接续任务联动：排队 → 创建/追加任务；接管 → 认领活动任务；结束/转回机器人 → 取消活动任务
+    if (body.action === 'handoff') {
+      const p = ((row.priority as string) ?? 'P2') as 'P0' | 'P1' | 'P2';
+      const { task, created } = await ensureHandoffTask({ conversationId: id, channel: String(row.channel ?? 'web'), priority: p, reason: `坐席转人工排队${body.reason ? `：${body.reason}` : ''}`, progress: { doneStages: [], evidence: [], missing: [], candidate: null, failure: null, nextAction: '接续会话并处理诉求' }, traceId: null });
+      if (created) await appendMessage(id, 'system', `【已创建人工接续任务 ${task.id}】${task.windowText}`, { meta: { internal: true, handoffId: task.id } });
+    } else if (body.action === 'takeover') {
+      await claimActiveTask(id, body.actor);
+    } else if (body.action === 'close' || body.action === 'robot') {
+      await cancelActiveTasks(id, body.actor, body.action === 'close' ? '会话结束' : '转回机器人接待');
+    }
     // 后处理闭环（借鉴云商坐席辅助第三环）：会话结束后自动生成小记与待办，不阻塞响应
     if (body.action === 'close' && (await loadMessages(id)).filter((m) => m.role !== 'system').length >= 2) {
       summarize(id)
@@ -177,22 +189,22 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.post('/api/conversations/:id/classify', async (req) => await classify((req.params as { id: string }).id));
 
-  app.post('/api/conversations/:id/ticket', async (req, reply) => {
+  /** 从会话拆出子案件（坐席操作；正式售后工单在 DMS，关联在子案件页完成） */
+  app.post('/api/conversations/:id/case', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const parsedTicket = z.object({ title: z.string().min(1).max(120), type: z.string().default('其他'), priority: z.enum(['P0', 'P1', 'P2']).default('P2'), description: z.string().max(2000).default(''), assignee: z.string().nullable().default(null), actor: z.string().default('坐席') }).parse(req.body);
-    const body = { ...parsedTicket, actor: req.user?.name ?? parsedTicket.actor };
+    const parsed = z.object({ title: z.string().min(1).max(120), type: z.string().default('其他'), priority: z.enum(['P0', 'P1', 'P2']).default('P2'), description: z.string().max(2000).default(''), assignee: z.string().nullable().default(null), actor: z.string().default('坐席') }).parse(req.body);
+    const actor = req.user?.name ?? parsed.actor;
     const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
-    const cust = await db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', String(row.customer_id));
-    const now = nowIso();
-    const hours = { P0: 2, P1: 8, P2: 24 }[body.priority];
-    const tid = `TK-${now.slice(0, 10).replace(/-/g, '')}-${uid().slice(0, 4).toUpperCase()}`;
-    const ticket: Ticket = { id: tid, title: body.title, type: body.type, status: 'open', priority: body.priority, conversationId: id, customerId: String(row.customer_id), customerName: cust?.name ?? '未知', assignee: body.assignee, description: body.description, slaDueAt: new Date(Date.now() + hours * 3600e3).toISOString(), createdAt: now, updatedAt: now, source: 'agent', history: [{ at: now, by: body.actor, action: '从会话创建工单' }] };
-    await db().run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ticket.id, ticket.title, ticket.type, ticket.status, ticket.priority, ticket.conversationId, ticket.customerId, ticket.customerName, ticket.assignee, ticket.description, ticket.slaDueAt, ticket.createdAt, ticket.updatedAt, ticket.source, J.str(ticket.history));
-    await appendMessage(id, 'system', `【已创建工单 ${tid}】${body.title}`, { meta: { internal: true, ticketId: tid } });
-    await audit(body.actor, 'ticket.create', tid, { conversationId: id });
+    const lastTrace = await db().get<{ id: string; doc: string }>('SELECT id, doc FROM traces WHERE conversation_id=? ORDER BY created_at DESC LIMIT 1', id);
+    const traceDoc = lastTrace ? J.parse<{ slots?: { key: string; value: string | null; source: string }[]; evidence?: { items?: { tool: string; ok: boolean; summary?: string }[] }; reply?: { candidate?: string | null } }>(lastTrace.doc, {}) : {};
+    const slots = Object.fromEntries((traceDoc.slots ?? []).filter((s) => s.value && s.source !== 'missing').map((s) => [s.key, String(s.value)]));
+    const facts = (traceDoc.evidence?.items ?? []).filter((i) => i.ok).map((i) => ({ tool: i.tool, summary: i.summary ?? '' }));
+    const c = await createCase(db(), { ...parsed, conversationId: id, customerId: String(row.customer_id), evidence: { slots, facts, traceIds: lastTrace ? [lastTrace.id] : [], candidateReply: traceDoc.reply?.candidate ?? null }, source: 'agent', actor });
+    await appendMessage(id, 'system', `【已拆出子案件 ${c.id}】${c.title}`, { meta: { internal: true, caseId: c.id } });
+    await audit(actor, 'case.create', c.id, { conversationId: id });
     reply.code(201);
-    return ticket;
+    return c;
   });
 
   app.get('/api/customers', async () => (await db().all('SELECT * FROM customers ORDER BY name')).map((c) => ({ ...c, tags: J.parse(c.tags, []) })));
