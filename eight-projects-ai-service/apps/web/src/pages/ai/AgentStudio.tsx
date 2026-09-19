@@ -4,6 +4,7 @@ import { ExperimentOutlined, RocketOutlined, SaveOutlined, UndoOutlined } from '
 import type { AgentConfig, ScenarioPack, Trace } from '@eight/shared';
 import { api, fmtTime, pct, useApi } from '../../api';
 import TraceViewer, { DecisionTag, RiskTag } from '../../components/TraceViewer';
+import WhitelistPanel from '../../components/WhitelistPanel';
 import { useAuth } from '../../auth';
 
 interface Meta {
@@ -302,6 +303,11 @@ export default function AgentStudio() {
                 </Col>
               </Row>
             ),
+          },
+          {
+            key: 'whitelist',
+            label: '白名单签发',
+            children: <WhitelistPanel scenarios={meta?.scenarios ?? []} />,
           },
           {
             key: 'versions',

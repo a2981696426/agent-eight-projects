@@ -40,6 +40,7 @@ export default function TraceViewer({ trace, compact = false }: { trace: Trace |
         <Tag>意图 {trace.intent ?? '—'}</Tag>
         <RiskTag level={trace.risk?.level} />
         <DecisionTag decision={trace.autonomy?.decision} priority={trace.autonomy?.priority} />
+        {trace.autonomy?.whitelistVersion !== undefined && <Tag color={trace.autonomy.whitelistVersion ? 'geekblue' : 'red'}>白名单 {trace.autonomy.whitelistVersion ?? '未签发（默认拒绝）'}</Tag>}
         <Tag>{trace.totalDurationMs} ms</Tag>
         <Tag>
           LLM {trace.usage.calls} 次 · {trace.usage.promptTokens + trace.usage.completionTokens} tokens
