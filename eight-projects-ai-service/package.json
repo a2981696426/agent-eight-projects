@@ -14,6 +14,7 @@
     "typecheck": "pnpm -r run typecheck",
     "seed": "pnpm --filter @eight/api seed",
     "start": "pnpm --filter @eight/api start",
+    "start:prod": "cross-env SERVE_WEB=1 pnpm --filter @eight/api start",
     "test": "pnpm --filter @eight/agent-core test",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "verify": "pnpm typecheck && pnpm test && pnpm build && pnpm e2e"
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "concurrently": "^10.0.5",
+    "cross-env": "^10.1.0",
     "typescript": "^5.9.0"
   }
 }

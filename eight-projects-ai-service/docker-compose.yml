@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: eight-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eight
+      POSTGRES_USER: eight
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eight}
+      # 中文排序/比较用 C 排序规则最稳，UTF8 编码
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eight -d eight"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ai-service:
+    build: .
+    image: eight-projects-ai-service:latest
+    container_name: eight-ai-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8787}:8787"
+    env_file:
+      - .env            # LLM_API_KEY / LLM_BASE_URL / LLM_FALLBACK_* / SESSION_SECRET
+    environment:
+      SERVE_WEB: "1"
+      DATA_DIR: /data
+      API_PORT: "8787"
+      # 生产唯一持久化：PostgreSQL 16 + pgvector（CS-013 / ADR-0041）
+      DATABASE_URL: postgres://eight:${POSTGRES_PASSWORD:-eight}@postgres:5432/eight
+    volumes:
+      - ai-service-data:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  ai-service-data:

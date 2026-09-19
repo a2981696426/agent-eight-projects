@@ -33,17 +33,17 @@ export async function ticketRoutes(app: FastifyInstance) {
         params.push(q[k]);
       }
     }
-    const rows = db().all(`SELECT * FROM tickets ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, created_at DESC`, ...params);
+    const rows = await db().all(`SELECT * FROM tickets ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END, created_at DESC`, ...params);
     return rows.map(toTicket);
   });
   app.get('/api/tickets/stats', async () => {
-    const byStatus = db().all<{ status: string; n: number }>('SELECT status, COUNT(*) n FROM tickets GROUP BY status');
-    const byPriority = db().all<{ priority: string; n: number }>('SELECT priority, COUNT(*) n FROM tickets GROUP BY priority');
-    const overdue = db().get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('resolved','closed') AND sla_due_at < ?", nowIso())?.n ?? 0;
-    return { byStatus, byPriority, overdue, total: db().count('tickets') };
+    const byStatus = await db().all<{ status: string; n: number }>('SELECT status, COUNT(*) n FROM tickets GROUP BY status');
+    const byPriority = await db().all<{ priority: string; n: number }>('SELECT priority, COUNT(*) n FROM tickets GROUP BY priority');
+    const overdue = (await db().get<{ n: number }>("SELECT COUNT(*) n FROM tickets WHERE status NOT IN ('resolved','closed') AND sla_due_at < ?", nowIso()))?.n ?? 0;
+    return { byStatus, byPriority, overdue, total: await db().count('tickets') };
   });
   app.get('/api/tickets/:id', async (req, reply) => {
-    const r = db().get('SELECT * FROM tickets WHERE id=?', (req.params as { id: string }).id);
+    const r = await db().get('SELECT * FROM tickets WHERE id=?', (req.params as { id: string }).id);
     return r ? toTicket(r) : reply.code(404).send({ error: '工单不存在' });
   });
   app.post('/api/tickets', async (req, reply) => {
@@ -51,15 +51,15 @@ export async function ticketRoutes(app: FastifyInstance) {
     const now = nowIso();
     const hours = { P0: 2, P1: 8, P2: 24 }[body.priority];
     const id = `TK-${now.slice(0, 10).replace(/-/g, '')}-${uid().slice(0, 4).toUpperCase()}`;
-    const cust = body.customerId ? db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', body.customerId) : null;
-    db().run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', id, body.title, body.type, 'open', body.priority, body.conversationId, body.customerId, cust?.name ?? '—', body.assignee, body.description, new Date(Date.now() + hours * 3600e3).toISOString(), now, now, 'manual', J.str([{ at: now, by: body.actor, action: '创建工单' }]));
+    const cust = body.customerId ? await db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', body.customerId) : null;
+    await db().run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', id, body.title, body.type, 'open', body.priority, body.conversationId, body.customerId, cust?.name ?? '—', body.assignee, body.description, new Date(Date.now() + hours * 3600e3).toISOString(), now, now, 'manual', J.str([{ at: now, by: body.actor, action: '创建工单' }]));
     reply.code(201);
-    return toTicket(db().get('SELECT * FROM tickets WHERE id=?', id)!);
+    return toTicket((await db().get('SELECT * FROM tickets WHERE id=?', id))!);
   });
   app.patch('/api/tickets/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z.object({ status: z.enum(['open', 'processing', 'pending', 'resolved', 'closed']).optional(), assignee: z.string().nullable().optional(), priority: z.enum(['P0', 'P1', 'P2']).optional(), note: z.string().max(1000).default(''), actor: z.string().default('坐席') }).parse(req.body);
-    const r = db().get('SELECT * FROM tickets WHERE id=?', id);
+    const r = await db().get('SELECT * FROM tickets WHERE id=?', id);
     if (!r) return reply.code(404).send({ error: '工单不存在' });
     const t = toTicket(r);
     const now = nowIso();
@@ -69,7 +69,7 @@ export async function ticketRoutes(app: FastifyInstance) {
     if (body.priority && body.priority !== t.priority) actions.push(`优先级 ${t.priority} → ${body.priority}`);
     if (!actions.length && !body.note) return t;
     t.history.push({ at: now, by: body.actor, action: actions.join('；') || '备注', note: body.note || undefined });
-    db().run('UPDATE tickets SET status=?, assignee=?, priority=?, updated_at=?, history=? WHERE id=?', body.status ?? t.status, body.assignee === undefined ? t.assignee : body.assignee, body.priority ?? t.priority, now, J.str(t.history), id);
-    return toTicket(db().get('SELECT * FROM tickets WHERE id=?', id)!);
+    await db().run('UPDATE tickets SET status=?, assignee=?, priority=?, updated_at=?, history=? WHERE id=?', body.status ?? t.status, body.assignee === undefined ? t.assignee : body.assignee, body.priority ?? t.priority, now, J.str(t.history), id);
+    return toTicket((await db().get('SELECT * FROM tickets WHERE id=?', id))!);
   });
 }

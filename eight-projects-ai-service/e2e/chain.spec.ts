@@ -8,12 +8,18 @@ test.describe('核心执行链（真实大模型）', () => {
     await expect(page.locator('.ant-card-head-title').filter({ hasText: '访客端' })).toBeVisible();
     await page.getByPlaceholder('输入访客问题…').fill('订单 20260918000123 的快递三天没动了，什么情况？');
     await page.getByRole('button', { name: /发送/ }).click();
+    // SSE 流式进度：处理期间应看到阶段芯片
+    await expect(page.locator('.chain-progress')).toBeVisible({ timeout: 5_000 });
     // 等待机器人气泡出现（真实模型调用，最长 90s）
-    await expect(page.locator('.bubble.bot').first()).toBeVisible({ timeout: 90_000 });
+    await expect(page.locator('.bubble.bot .txt').first()).toBeVisible({ timeout: 90_000 });
     await expect(page.locator('.stage')).toHaveCount(9, { timeout: 20_000 });
     await expect(page.locator('.stage.ok')).toHaveCount(9);
     await expect(page.locator('.ant-tag').filter({ hasText: /^场景 logistics$/ })).toBeVisible();
     await expect(page.locator('.bubble.bot').first()).not.toContainText('正在思考');
+    // 访客端气泡必须与轨迹「对客回复（实际发送）」逐字一致；候选话术只在人工确认/升级时另列
+    const sent = (await page.locator('.reply-sent').innerText()).trim();
+    const bubble = (await page.locator('.bubble.bot .txt').last().innerText()).trim();
+    expect(bubble).toBe(sent);
     await page.screenshot({ path: shot('chain-logistics'), fullPage: true });
     w.assertClean('online-robot chain');
   });

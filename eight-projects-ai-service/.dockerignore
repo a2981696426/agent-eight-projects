@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+apps/web/dist
+data
+artifacts
+test-results
+playwright-report
+e2e/.auth
+.env
+.env.*
+!.env.example
+.runtime
+*.log

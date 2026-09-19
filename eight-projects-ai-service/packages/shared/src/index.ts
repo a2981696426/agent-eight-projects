@@ -40,6 +40,7 @@ export interface Conversation {
   createdAt: string;
   messageCount: number;
   summary?: string | null;
+  satisfaction?: number | null;
   unread?: number;
 }
 
@@ -80,11 +81,15 @@ export interface StageRecord {
 
 export interface LlmUsage {
   model: string;
+  provider?: string;
   promptTokens: number;
   completionTokens: number;
   reasoningTokens?: number;
+  cachedTokens?: number;
   durationMs: number;
   thinking: boolean;
+  attempts?: number;
+  failedOver?: boolean;
 }
 
 export type RiskLevel = 'L0' | 'L1' | 'L2' | 'L3';
@@ -181,12 +186,22 @@ export interface Trace {
   } | null;
   risk: RiskAssessment | null;
   autonomy: AutonomyResult | null;
-  reply: { text: string; internalNote: string; kind: 'answer' | 'clarify' | 'handoff' } | null;
+  /**
+   * text：实际对客发送的文本（自主回复 = 候选话术；人工确认 = 等待人工核实提示；升级 = 转接话术）
+   * candidate：推理阶段生成的候选话术，供坐席审核采用；自主回复时与 text 相同
+   */
+  reply: { text: string; candidate: string; internalNote: string; kind: 'answer' | 'clarify' | 'pending_confirm' | 'handoff' } | null;
   stages: StageRecord[];
   totalDurationMs: number;
   usage: { promptTokens: number; completionTokens: number; calls: number };
   status: 'completed' | 'failed';
   error?: string | null;
+  /** 模型不可用时进入规则降级：意图用关键词规则、话术用证据模板，强制人工确认 */
+  degraded: boolean;
+  degradedReason: string | null;
+  /** 本次实际使用的 provider（去重），含是否发生切换 */
+  providers: string[];
+  failedOver: boolean;
 }
 
 /** 场景包 = 数字员工。同一条链按场景包切换必填槽位、工具、知识标签与允许动作。 */

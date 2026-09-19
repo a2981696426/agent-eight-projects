@@ -19,33 +19,34 @@ export async function aigcRoutes(app: FastifyInstance) {
   ]);
   app.get('/api/aigc/jobs', async (req) => {
     const q = req.query as Record<string, string>;
-    return db().all(`SELECT * FROM aigc_jobs ${q.capability ? 'WHERE capability=?' : ''} ORDER BY created_at DESC LIMIT 100`, ...(q.capability ? [q.capability] : [])).map((j) => ({ ...j, input: J.parse(j.input, null), output: J.parse(j.output, null), usage: J.parse(j.usage, null) }));
+    const jobs = await db().all(`SELECT * FROM aigc_jobs ${q.capability ? 'WHERE capability=?' : ''} ORDER BY created_at DESC LIMIT 100`, ...(q.capability ? [q.capability] : []));
+    return jobs.map((j) => ({ ...j, input: J.parse(j.input, null), output: J.parse(j.output, null), usage: J.parse(j.usage, null) }));
   });
   app.post('/api/aigc/:capability', async (req, reply) => {
     const { capability } = req.params as { capability: string };
     const body = (req.body ?? {}) as Record<string, unknown>;
     switch (capability) {
       case 'summary':
-        return summarize(z.string().parse(body.conversationId));
+        return await summarize(z.string().parse(body.conversationId));
       case 'classify':
-        return classify(z.string().parse(body.conversationId));
+        return await classify(z.string().parse(body.conversationId));
       case 'ticket-extract':
-        return extractTicket(z.string().parse(body.conversationId));
+        return await extractTicket(z.string().parse(body.conversationId));
       case 'rewrite':
-        return rewrite(z.string().min(1).parse(body.text), String(body.style ?? '更亲切、更简洁'), loadAgent().persona);
+        return await rewrite(z.string().min(1).parse(body.text), String(body.style ?? '更亲切、更简洁'), (await loadAgent()).persona);
       case 'faq-extract':
-        return extractFaq(z.string().min(20).parse(body.text), Number(body.max ?? 8));
+        return await extractFaq(z.string().min(20).parse(body.text), Number(body.max ?? 8));
       case 'similar-questions':
-        return similarQuestions(z.string().min(2).parse(body.question ?? body.text), Number(body.n ?? 6));
+        return await similarQuestions(z.string().min(2).parse(body.question ?? body.text), Number(body.n ?? 6));
       case 'reply-suggest': {
         const conversationId = z.string().parse(body.conversationId);
-        const msgs = loadMessages(conversationId);
+        const msgs = await loadMessages(conversationId);
         const { knowledgeIndex } = await import('../services/chain.ts');
         const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
         const hits = lastUser ? knowledgeIndex().search(lastUser.text, { topK: 4 }) : [];
         const Schema = z.object({ suggestions: z.array(z.object({ text: z.string(), basis: z.string() })).min(1).max(3) });
         const r = await llm.chatJson(Schema, [
-          { role: 'system', content: `${loadAgent().persona}\n根据对话与知识给出 1~3 条可直接发送的应答建议，每条附依据(basis)。不得承诺退款/赔付结果，没有知识支撑的事实不要写。只输出 JSON。` },
+          { role: 'system', content: `${(await loadAgent()).persona}\n根据对话与知识给出 1~3 条可直接发送的应答建议，每条附依据(basis)。不得承诺退款/赔付结果，没有知识支撑的事实不要写。只输出 JSON。` },
           { role: 'user', content: `知识：\n${hits.map((h) => `- 《${h.docTitle}》${h.text}`).join('\n') || '无'}\n\n对话：\n${msgs.filter((m) => m.role !== 'system').map((m) => `[${m.role}] ${m.text}`).join('\n')}` },
         ]);
         return { ...r.value, knowledge: hits, usage: r.usage };

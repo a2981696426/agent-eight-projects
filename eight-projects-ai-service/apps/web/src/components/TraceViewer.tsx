@@ -44,6 +44,8 @@ export default function TraceViewer({ trace, compact = false }: { trace: Trace |
         <Tag>
           LLM {trace.usage.calls} 次 · {trace.usage.promptTokens + trace.usage.completionTokens} tokens
         </Tag>
+        {trace.providers?.length ? <Tag color={trace.failedOver ? 'orange' : 'default'}>provider {trace.providers.join('→')}{trace.failedOver ? ' · 已切换' : ''}</Tag> : null}
+        {trace.degraded && <Tag color="volcano">规则降级：{trace.degradedReason}</Tag>}
         <Typography.Text type="secondary" className="mono">
           {trace.id}
         </Typography.Text>
@@ -76,9 +78,14 @@ export default function TraceViewer({ trace, compact = false }: { trace: Trace |
       ))}
       {trace.reply && (
         <Descriptions size="small" column={1} bordered style={{ marginTop: 8 }}>
-          <Descriptions.Item label="最终回复">
-            <span style={{ whiteSpace: 'pre-wrap' }}>{trace.reply.text}</span>
+          <Descriptions.Item label="对客回复（实际发送）">
+            <span className="reply-sent" style={{ whiteSpace: 'pre-wrap' }}>{trace.reply.text}</span>
           </Descriptions.Item>
+          {trace.reply.candidate && trace.reply.candidate !== trace.reply.text && (
+            <Descriptions.Item label={trace.reply.kind === 'handoff' ? '候选话术（已升级，供坐席参考）' : '候选话术（待人工确认后发送）'}>
+              <span className="reply-candidate" style={{ whiteSpace: 'pre-wrap' }}>{trace.reply.candidate}</span>
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label="内部备注">
             <span style={{ whiteSpace: 'pre-wrap', fontSize: 12, color: '#4b5563' }}>{trace.reply.internalNote}</span>
           </Descriptions.Item>

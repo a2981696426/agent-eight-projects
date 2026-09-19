@@ -25,8 +25,8 @@ export async function conversationRoutes(app: FastifyInstance) {
       where.push('channel=?');
       params.push(q.channel);
     }
-    const rows = db().all(`SELECT * FROM conversations ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY CASE status WHEN 'waiting_human' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, last_message_at DESC LIMIT 200`, ...params);
-    return rows.map(rowToConversation);
+    const rows = await db().all(`SELECT * FROM conversations ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY CASE status WHEN 'waiting_human' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, last_message_at DESC LIMIT 200`, ...params);
+    return Promise.all(rows.map((r) => rowToConversation(r)));
   });
 
   app.post('/api/conversations', async (req, reply) => {
@@ -34,26 +34,26 @@ export async function conversationRoutes(app: FastifyInstance) {
     let customerId = body.customerId;
     if (!customerId) {
       customerId = uid('cust-');
-      db().run('INSERT INTO customers VALUES (?,?,?,?,?,?,?)', customerId, `访客${customerId.slice(-4)}`, '', 'normal', body.channel, J.str(['新访客']), '');
+      await db().run('INSERT INTO customers VALUES (?,?,?,?,?,?,?)', customerId, `访客${customerId.slice(-4)}`, '', 'normal', body.channel, J.str(['新访客']), '');
     }
     const id = uid('conv-');
     const now = nowIso();
-    db().run('INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', id, body.title, body.channel, customerId, 'open', body.mode, null, null, null, now, now, null, 'agent-cs-main', null);
-    audit('system', 'conversation.create', id, body);
+    await db().run('INSERT INTO conversations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', id, body.title, body.channel, customerId, 'open', body.mode, null, null, null, now, now, null, 'agent-cs-main', null);
+    await audit('system', 'conversation.create', id, body);
     reply.code(201);
-    return rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!);
+    return await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!);
   });
 
   app.get('/api/conversations/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const row = db().get('SELECT * FROM conversations WHERE id=?', id);
+    const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
-    const conversation = rowToConversation(row);
-    const messages = loadMessages(id);
-    const customer = loadCustomer(conversation.customerId);
-    const orders = customer ? db().all('SELECT id, product, status, paid_amount, created_at FROM orders WHERE customer_id=? ORDER BY created_at DESC', customer.id) : [];
-    const traces = db().all<{ id: string; created_at: string; scenario: string; intent: string; decision: string; risk_level: string; duration_ms: number; status: string }>('SELECT id, created_at, scenario, intent, decision, risk_level, duration_ms, status FROM traces WHERE conversation_id=? ORDER BY created_at DESC', id);
-    const tickets = db().all('SELECT id, title, status, priority FROM tickets WHERE conversation_id=?', id);
+    const conversation = await rowToConversation(row);
+    const messages = await loadMessages(id);
+    const customer = await loadCustomer(conversation.customerId);
+    const orders = customer ? await db().all('SELECT id, product, status, paid_amount, created_at FROM orders WHERE customer_id=? ORDER BY created_at DESC', customer.id) : [];
+    const traces = await db().all<{ id: string; created_at: string; scenario: string; intent: string; decision: string; risk_level: string; duration_ms: number; status: string }>('SELECT id, created_at, scenario, intent, decision, risk_level, duration_ms, status FROM traces WHERE conversation_id=? ORDER BY created_at DESC', id);
+    const tickets = await db().all('SELECT id, title, status, priority FROM tickets WHERE conversation_id=?', id);
     return { conversation, messages, customer, orders, traces, tickets };
   });
 
@@ -61,27 +61,64 @@ export async function conversationRoutes(app: FastifyInstance) {
   app.post('/api/conversations/:id/messages', async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z.object({ role: z.enum(['user', 'agent']), text: z.string().min(1).max(4000) }).parse(req.body);
-    const row = db().get('SELECT * FROM conversations WHERE id=?', id);
+    const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
     if (row.status === 'closed') return reply.code(409).send({ error: '会话已结束，请先重新打开' });
     if (body.role === 'agent') {
       if (row.controller === 'bot') return reply.code(409).send({ error: '当前由机器人接待，请先接管再回复', code: 'TAKEOVER_REQUIRED' });
-      const m = appendMessage(id, 'agent', body.text);
-      db().run("UPDATE conversations SET status='open' WHERE id=? AND status='waiting_human'", id);
-      return { message: m, conversation: rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!) };
+      const m = await appendMessage(id, 'agent', body.text);
+      await db().run("UPDATE conversations SET status='open' WHERE id=? AND status='waiting_human'", id);
+      return { message: m, conversation: await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!) };
     }
     if (row.controller !== 'bot') {
-      const m = appendMessage(id, 'user', body.text);
-      return { message: m, conversation: rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!), trace: null };
+      const m = await appendMessage(id, 'user', body.text);
+      return { message: m, conversation: await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!), trace: null };
     }
     const r = await runForConversation(id, body.text, { mode: 'bot' });
     return { message: r.userMessage, botMessage: r.botMessage, trace: r.trace, conversation: r.conversation };
   });
 
+  /**
+   * 流式版本：以 SSE 逐阶段推送执行链进度（event: stage / done / error）。
+   * 借鉴多智能体创作平台的 SSE 推送：把 8~14s 的等待变成可见进度。用 fetch 流式读取（POST 不能用 EventSource）。
+   */
+  app.post('/api/conversations/:id/messages/stream', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ role: z.literal('user'), text: z.string().min(1).max(4000) }).parse(req.body);
+    const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
+    if (!row) return reply.code(404).send({ error: '会话不存在' });
+    if (row.status === 'closed') return reply.code(409).send({ error: '会话已结束，请先重新打开' });
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    const send = (event: string, data: unknown) => {
+      if (!raw.writableEnded) raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const heartbeat = setInterval(() => !raw.writableEnded && raw.write(': ping\n\n'), 10_000);
+    try {
+      if (row.controller !== 'bot') {
+        const m = await appendMessage(id, 'user', body.text);
+        send('done', { message: m, botMessage: null, trace: null, conversation: await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!) });
+      } else {
+        send('accepted', { at: nowIso() });
+        const r = await runForConversation(id, body.text, {
+          mode: 'bot',
+          onStage: (stage) => send('stage', { id: stage.id, label: stage.label, status: stage.status, durationMs: stage.durationMs, summary: stage.summary }),
+        });
+        send('done', { message: r.userMessage, botMessage: r.botMessage, trace: r.trace, conversation: r.conversation });
+      }
+    } catch (e) {
+      send('error', { error: (e as Error).message });
+    } finally {
+      clearInterval(heartbeat);
+      raw.end();
+    }
+  });
+
   /** 坐席辅助：基于最后一条用户消息生成建议（不落库为消息） */
   app.post('/api/conversations/:id/assist', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const msgs = loadMessages(id);
+    const msgs = await loadMessages(id);
     const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
     if (!lastUser) return reply.code(400).send({ error: '会话中没有用户消息' });
     // 辅助模式：把最后一条用户消息之前的历史作为上下文重跑一次链
@@ -91,8 +128,10 @@ export async function conversationRoutes(app: FastifyInstance) {
 
   app.post('/api/conversations/:id/control', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = z.object({ action: z.enum(['takeover', 'robot', 'close', 'reopen', 'handoff']), actor: z.string().default('坐席'), reason: z.string().max(300).default('') }).parse(req.body);
-    const row = db().get('SELECT * FROM conversations WHERE id=?', id);
+    const parsed = z.object({ action: z.enum(['takeover', 'robot', 'close', 'reopen', 'handoff']), actor: z.string().default('坐席'), reason: z.string().max(300).default('') }).parse(req.body);
+    // 登录用户优先作为操作者，避免前端伪造
+    const body = { ...parsed, actor: req.user?.name ?? parsed.actor };
+    const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
     const patch: Record<string, unknown> = {};
     if (body.action === 'takeover') Object.assign(patch, { controller: 'human', status: 'open', assignee: body.actor });
@@ -101,62 +140,88 @@ export async function conversationRoutes(app: FastifyInstance) {
     if (body.action === 'reopen') Object.assign(patch, { status: 'open' });
     if (body.action === 'handoff') Object.assign(patch, { controller: 'human', status: 'waiting_human', assignee: null, priority: row.priority ?? 'P2' });
     const keys = Object.keys(patch);
-    db().run(`UPDATE conversations SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, ...(keys.map((k) => patch[k]) as (string | null)[]), id);
-    appendMessage(id, 'system', `【${{ takeover: '人工接管', robot: '转回机器人', close: '会话结束', reopen: '重新打开', handoff: '转人工排队' }[body.action]}】${body.actor}${body.reason ? `：${body.reason}` : ''}`, { meta: { internal: true } });
-    audit(body.actor, `conversation.${body.action}`, id, body);
-    return rowToConversation(db().get('SELECT * FROM conversations WHERE id=?', id)!);
+    await db().run(`UPDATE conversations SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, ...(keys.map((k) => patch[k]) as (string | null)[]), id);
+    await appendMessage(id, 'system', `【${{ takeover: '人工接管', robot: '转回机器人', close: '会话结束', reopen: '重新打开', handoff: '转人工排队' }[body.action]}】${body.actor}${body.reason ? `：${body.reason}` : ''}`, { meta: { internal: true } });
+    await audit(body.actor, `conversation.${body.action}`, id, body);
+    // 后处理闭环（借鉴云商坐席辅助第三环）：会话结束后自动生成小记与待办，不阻塞响应
+    if (body.action === 'close' && (await loadMessages(id)).filter((m) => m.role !== 'system').length >= 2) {
+      summarize(id)
+        .then(async (s) => {
+          const text = `问题：${s.problem}\n处理：${s.handling}\n结果：${s.outcome}${s.followUp ? `\n跟进：${s.followUp}` : ''}`;
+          await db().run('UPDATE conversations SET summary=? WHERE id=?', text, id);
+          await appendMessage(id, 'system', `【自动小记】${text}${s.tags.length ? `\n标签：${s.tags.join('、')}` : ''}`, { meta: { internal: true, autoSummary: true } });
+        })
+        .catch((e) => app.log.warn(`自动小记失败 ${id}: ${(e as Error).message}`));
+    }
+    return await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!);
+  });
+
+  /** 访客满意度评价（会话结束后） */
+  app.post('/api/conversations/:id/rate', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ score: z.number().int().min(1).max(5) }).parse(req.body);
+    const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
+    if (!row) return reply.code(404).send({ error: '会话不存在' });
+    await db().run('UPDATE conversations SET satisfaction=? WHERE id=?', body.score, id);
+    await appendMessage(id, 'system', `【访客评价】${body.score} 星`, { meta: { internal: true, satisfaction: body.score } });
+    return await rowToConversation((await db().get('SELECT * FROM conversations WHERE id=?', id))!);
   });
 
   app.post('/api/conversations/:id/summary', async (req) => {
     const { id } = req.params as { id: string };
     const s = await summarize(id);
     const text = `问题：${s.problem}\n处理：${s.handling}\n结果：${s.outcome}${s.followUp ? `\n跟进：${s.followUp}` : ''}`;
-    db().run('UPDATE conversations SET summary=? WHERE id=?', text, id);
+    await db().run('UPDATE conversations SET summary=? WHERE id=?', text, id);
     return s;
   });
 
-  app.post('/api/conversations/:id/classify', async (req) => classify((req.params as { id: string }).id));
+  app.post('/api/conversations/:id/classify', async (req) => await classify((req.params as { id: string }).id));
 
   app.post('/api/conversations/:id/ticket', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = z.object({ title: z.string().min(1).max(120), type: z.string().default('其他'), priority: z.enum(['P0', 'P1', 'P2']).default('P2'), description: z.string().max(2000).default(''), assignee: z.string().nullable().default(null), actor: z.string().default('坐席') }).parse(req.body);
-    const row = db().get('SELECT * FROM conversations WHERE id=?', id);
+    const parsedTicket = z.object({ title: z.string().min(1).max(120), type: z.string().default('其他'), priority: z.enum(['P0', 'P1', 'P2']).default('P2'), description: z.string().max(2000).default(''), assignee: z.string().nullable().default(null), actor: z.string().default('坐席') }).parse(req.body);
+    const body = { ...parsedTicket, actor: req.user?.name ?? parsedTicket.actor };
+    const row = await db().get('SELECT * FROM conversations WHERE id=?', id);
     if (!row) return reply.code(404).send({ error: '会话不存在' });
-    const cust = db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', String(row.customer_id));
+    const cust = await db().get<{ name: string }>('SELECT name FROM customers WHERE id=?', String(row.customer_id));
     const now = nowIso();
     const hours = { P0: 2, P1: 8, P2: 24 }[body.priority];
     const tid = `TK-${now.slice(0, 10).replace(/-/g, '')}-${uid().slice(0, 4).toUpperCase()}`;
     const ticket: Ticket = { id: tid, title: body.title, type: body.type, status: 'open', priority: body.priority, conversationId: id, customerId: String(row.customer_id), customerName: cust?.name ?? '未知', assignee: body.assignee, description: body.description, slaDueAt: new Date(Date.now() + hours * 3600e3).toISOString(), createdAt: now, updatedAt: now, source: 'agent', history: [{ at: now, by: body.actor, action: '从会话创建工单' }] };
-    db().run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ticket.id, ticket.title, ticket.type, ticket.status, ticket.priority, ticket.conversationId, ticket.customerId, ticket.customerName, ticket.assignee, ticket.description, ticket.slaDueAt, ticket.createdAt, ticket.updatedAt, ticket.source, J.str(ticket.history));
-    appendMessage(id, 'system', `【已创建工单 ${tid}】${body.title}`, { meta: { internal: true, ticketId: tid } });
-    audit(body.actor, 'ticket.create', tid, { conversationId: id });
+    await db().run('INSERT INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', ticket.id, ticket.title, ticket.type, ticket.status, ticket.priority, ticket.conversationId, ticket.customerId, ticket.customerName, ticket.assignee, ticket.description, ticket.slaDueAt, ticket.createdAt, ticket.updatedAt, ticket.source, J.str(ticket.history));
+    await appendMessage(id, 'system', `【已创建工单 ${tid}】${body.title}`, { meta: { internal: true, ticketId: tid } });
+    await audit(body.actor, 'ticket.create', tid, { conversationId: id });
     reply.code(201);
     return ticket;
   });
 
-  app.get('/api/customers', async () => db().all('SELECT * FROM customers ORDER BY name').map((c) => ({ ...c, tags: J.parse(c.tags, []) })));
+  app.get('/api/customers', async () => (await db().all('SELECT * FROM customers ORDER BY name')).map((c) => ({ ...c, tags: J.parse(c.tags, []) })));
   app.get('/api/customers/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const c = loadCustomer(id);
+    const c = await loadCustomer(id);
     if (!c) return reply.code(404).send({ error: '客户不存在' });
-    const orders = db().all('SELECT * FROM orders WHERE customer_id=? ORDER BY created_at DESC', id).map((o) => ({
-      ...o,
-      logistics: db().get('SELECT * FROM logistics WHERE order_id=?', String(o.id)) ?? null,
-      invoice: db().get('SELECT * FROM invoices WHERE order_id=?', String(o.id)) ?? null,
-      refunds: db().all('SELECT * FROM refunds WHERE order_id=?', String(o.id)),
-    }));
-    const conversations = db().all('SELECT * FROM conversations WHERE customer_id=? ORDER BY last_message_at DESC', id).map(rowToConversation);
+    const orderRows = await db().all('SELECT * FROM orders WHERE customer_id=? ORDER BY created_at DESC', id);
+    const orders = await Promise.all(
+      orderRows.map(async (o) => ({
+        ...o,
+        logistics: (await db().get('SELECT * FROM logistics WHERE order_id=?', String(o.id))) ?? null,
+        invoice: (await db().get('SELECT * FROM invoices WHERE order_id=?', String(o.id))) ?? null,
+        refunds: await db().all('SELECT * FROM refunds WHERE order_id=?', String(o.id)),
+      })),
+    );
+    const convRows = await db().all('SELECT * FROM conversations WHERE customer_id=? ORDER BY last_message_at DESC', id);
+    const conversations = await Promise.all(convRows.map((r) => rowToConversation(r)));
     return { customer: c, orders, conversations };
   });
 
   app.get('/api/traces', async (req) => {
     const q = req.query as Record<string, string>;
     const limit = Math.min(200, Number(q.limit ?? 50));
-    return db().all('SELECT id, conversation_id, agent_id, agent_version, created_at, scenario, intent, decision, risk_level, duration_ms, status FROM traces ORDER BY created_at DESC LIMIT ?', limit);
+    return await db().all('SELECT id, conversation_id, agent_id, agent_version, created_at, scenario, intent, decision, risk_level, duration_ms, status FROM traces ORDER BY created_at DESC LIMIT ?', limit);
   });
   app.get('/api/traces/:id', async (req, reply) => {
-    const t = loadTrace((req.params as { id: string }).id);
+    const t = await loadTrace((req.params as { id: string }).id);
     return t ?? reply.code(404).send({ error: 'trace 不存在' });
   });
-  app.get('/api/audit', async () => db().all('SELECT * FROM audit_log ORDER BY at DESC LIMIT 200').map((a) => ({ ...a, detail: J.parse(a.detail, null) })));
+  app.get('/api/audit', async () => (await db().all('SELECT * FROM audit_log ORDER BY at DESC LIMIT 200')).map((a) => ({ ...a, detail: J.parse(a.detail, null) })));
 }

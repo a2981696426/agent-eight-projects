@@ -11,6 +11,11 @@
 | L3 | Mind Studio、Agent Studio、AIGC、呼入机器人、AI 外呼 | 5 条真实流（发布→检索命中；试跑→发布→版本；IVR→执行链；小记；模拟外呼） | 隐藏 Tab 面板中的同名元素导致断言命中不可见节点 → 断言限定 `.ant-tabs-tabpane-active` |
 | L4/L5 | 质检、报表、大屏、客户之声、数字员工 | 5 条流（规则+语义质检→复核；报表切换保存；大屏渲染；VoC 分析→提问；发票智能体沙箱） | ① SQLite 字符串字面量误用双引号 → `/api/quality/report`、`/api/dashboard` 500 → 全部改单引号；② DeepSeek 要求 json_object 模式提示词含 "json" → `chatJson` 自动补充；③ VoC 提问样本关键词匹配为 0 → 主题名 + 二元组 + 停用词过滤，并返回真实样本数；④ 大屏饼图截屏时处于动画中 → `animation:false` |
 | L6 | 全量回归 + 生产构建 + 文档 | 31 条 e2e 全绿（含 8 条真实模型流），`pnpm build` 通过 | 根脚本 `pnpm -r --filter ./packages/**` 在 pnpm 11 语义变化 → 改为 `pnpm -r run build`；bundle 2.6MB → manualChunks 拆分 antd/echarts/react |
+| L7 | 回复语义修正 + 独立访客端 | 新增 `visitor.spec`（开始咨询 → 规则应答 → 人工确认等待提示 → 坐席接管回复轮询可见 → 刷新历史保留 → 结束评价），`chain.spec` 新增「气泡 === 轨迹对客回复」断言；33 条全绿 | 用户反馈：人工确认时访客气泡与轨迹「最终回复」不一致 → `reply.text` 改为实际对客文本、新增 `reply.candidate` 保存候选话术，`chain.ts` 改为单一来源，TraceViewer 分列展示；坐席回复后「在线机器人」页看不到 → 该页改为轮询，并新增 `/visitor` 独立访客端（本地记住会话、轮询人工消息、结束后满意度评价写入 `satisfaction`） |
+
+| L8 | Firecrawl/Context7 调研 + 执行链提速 + 模型高可用 + SSE | Benchmark 同一 10 例前后对比；单测新增 5 条（重试/熔断/切换/降级/跳过推理）；e2e 新增 `ha.spec`（全部模型故障 → 访客端 <8s 收到受限模式回复并转人工 → Studio 显示演练 → 恢复）；`chain.spec` 断言流式进度芯片 | **Benchmark**：场景准确率 100%→100%，决策准确率 80%→90%，平均耗时 **8825ms→5399ms（−39%）**，模型调用 23→19，tokens 36.5k→27.1k（−26%）；缺槽位追问 5.4s→1.1s。发现问题：pnpm 根目录无 tsx 导致 `node --import tsx` 失败 → 生产启动改在 `apps/api` 目录执行 |
+| L9 | 发布形态：登录 + 三角色权限、API 托管前端、Dockerfile/compose、会话结束自动小记 | `auth.spec`（未登录跳转/坐席只读/退出拦截；API 401/403/200 与审计）；Playwright 改为 setup 项目登录并复用 storageState；本地以 `SERVE_WEB=1` 启动核对 `/`、SPA 回退、静态资源、API 鉴权 | 已登录态访问 `/login` 被重定向使页面用例误判 → 断言放宽；38 条 e2e 全绿 |
+| L10 | 数据层迁移 PostgreSQL（CS-013 / ADR-0041）：`db.ts` 改为异步驱动抽象——生产 `pg` 连 PostgreSQL 16 + pgvector，本机/测试用 PGlite（进程内 Postgres，零依赖）；`?` 占位符自动转 `$n`；全部 ~150 处调用点异步化；compose 增加 `pgvector/pgvector:pg16` 服务；备份/恢复脚本与运行手册 | `apps/api/test/db.test.ts` 6 条（占位符转换、建表、聚合返回 number、事务回滚、ON CONFLICT 幂等、undefined→NULL）；`/api/dashboard`、`/api/reports/run`、`/api/quality/report`、`/api/voc/overview` 冒烟核对数值类型；38 条 e2e 全绿（真实模型） | 方言问题清单：① `INSERT OR REPLACE/IGNORE` → `ON CONFLICT DO UPDATE/NOTHING`（traces/quality_rules/ivr_flows/voc_items）；② `ROUND(AVG(score),1)` 在 double 上无重载 → `::numeric`；③ 子查询必须有别名（agents 概览）；④ `day` 是时间单位关键字不能作裸别名（VoC 趋势）→ `AS day` + 显式分组表达式；⑤ int8/numeric 默认返回字符串 → 驱动层 type parser 转 number；⑥ 报表 `GROUP BY key/value` 改为 `dim_key/metric_value`；⑦ e2e 保存报表撞名（数据库跨轮次持久化）→ 用例改唯一名。Docker 守护进程本机未运行，compose 与备份脚本待服务器验证 |
 
 ## 复跑验证
 
@@ -18,6 +23,6 @@
 pnpm install
 cp .env.example .env   # 填 LLM_API_KEY
 pnpm dev               # 终端 1：api 8787 + web 5173
-pnpm test              # agent-core 单测（不联网）
-pnpm e2e               # 终端 2：31 条 Playwright，含真实模型调用，约 3 分钟
+pnpm test              # agent-core 单测 12 条（不联网，含路由器重试/熔断/降级）
+pnpm e2e               # 终端 2：38 条 Playwright（先自动登录 admin），含真实模型调用与故障演练，约 3.5 分钟
 ```

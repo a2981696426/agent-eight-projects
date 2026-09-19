@@ -8,7 +8,7 @@
 | | 呼叫中心 | `/reception/call-center` | 暂缓（占位 + 接入依赖说明） |
 | | 视频客服 | `/reception/video` | 暂缓 |
 | | 工单系统 | `/reception/tickets` | 可用 |
-| 智能增强 | 在线机器人 | `/ai/online-robot` 访客端 + 执行链透视 | 可用 |
+| 智能增强 | 在线机器人 | `/ai/online-robot` 访客端 + 执行链透视；`/visitor` 独立访客端（客户视角，记住会话、轮询人工回复、结束评价） | 可用 |
 | | 呼入机器人 | `/ai/inbound-robot` IVR 流程编辑 + 文本模拟来电接入执行链 | 可用（无线路/ASR） |
 | | AI 外呼 | `/ai/outbound` 任务/名单/话术，大模型模拟外呼结果回写 | 可用（模拟） |
 | | AIGC 应用 | `/ai/aigc` 小记、分类、工单抽取、应答建议、润色、FAQ 抽取、相似问 | 可用 |
@@ -24,7 +24,7 @@
 ## 技术栈
 
 - **Monorepo**：pnpm workspace（`apps/api`、`apps/web`、`packages/agent-core`、`packages/shared`）
-- **后端**：Node ≥22.13、Fastify 5、TypeScript（tsx 直跑）、`node:sqlite`（零依赖嵌入式库，WAL）、zod 4
+- **后端**：Node ≥22.13、Fastify 5、TypeScript（tsx 直跑）、PostgreSQL 方言数据层（生产 `pg` → PostgreSQL 16 + pgvector；本机/测试 PGlite 进程内 Postgres，零外部依赖）、zod 4
 - **执行链**：`@eight/agent-core` 纯 TypeScript，无框架依赖；LLM 客户端用 fetch 直连兼容 OpenAI 协议的端点（默认 DeepSeek，透传 `thinking` / `reasoning_effort`）
 - **前端**：React 19、Vite 7、Ant Design 5（+ React 19 兼容补丁）、ECharts 5、react-router 7
 - **验证**：node:test 单测（agent-core）+ Playwright（系统 Chrome）全页面零控制台错误 + 真实大模型业务流
@@ -38,7 +38,7 @@
 ┌ apps/api ──────────────────────────────────────────────────────────────┐
 │ routes/conversations  tickets  knowledge  agents  aigc  bots  management│
 │ services/chain（工具注册、知识索引、会话落库、沙箱试跑） services/aigc     │
-│ db（SQLite 建表/迁移）  seed（演示数据：客户/订单/物流/发票/退款/知识/会话）│
+│ db（pg / PGlite 双驱动、?→$n、幂等迁移） seed（演示数据：客户/订单/物流/发票/退款/知识/会话）│
 └────────────────────────────────────────────────────────────────────────┘
 ┌ packages/agent-core ───────────────────────────────────────────────────┐
 │ pipeline.runChain（九阶段） llm（fast/reasoning 双模式） retrieval（BM25）  │
@@ -46,6 +46,21 @@
 └────────────────────────────────────────────────────────────────────────┘
 ┌ packages/shared ─── 前后端共享类型（Trace/Conversation/Ticket/Agent…）──┘
 ```
+
+## 发布形态与安全（L9）
+
+- **登录与角色**：`services/auth.ts`，scrypt 密码哈希 + 服务端会话 + 签名 httpOnly Cookie；三角色 admin / agent / analyst；`onRequest` 钩子统一鉴权，公开接口只有健康检查、登录与访客端最小集合；越权写操作 403 并写审计。前端 `RequireAuth` 路由守卫 + 角色隐藏发布/演练按钮。演示账号见登录页。
+- **单端口生产模式**：`SERVE_WEB=1` 时 API 用 `@fastify/static` 托管 `apps/web/dist`，非 `/api` GET 回退 `index.html`。
+- **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 含 `postgres`（`pgvector/pgvector:pg16`，healthcheck）与 `ai-service`，读取 `.env`。
+- **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
+
+## 数据层（L10，CS-013 / ADR-0041）
+
+- **唯一持久化 PostgreSQL**：`apps/api/src/db.ts` 提供 `SqlDriver` 抽象——`DATABASE_URL` 非空走 `pg` 连接池（生产），为空走 PGlite（进程内 Postgres，数据在 `data/pglite/`，`DATA_DIR=:memory:` 为内存库供单测）。两者跑同一套 Postgres 方言 SQL，本机与生产行为一致。
+- **`Db` 薄封装**：异步 `all/get/run/tx/count`；保留 `?` 占位符写法，驱动层转 `$n`；int8/numeric 统一解析为 number；`tx(fn)` 回调拿到绑定单连接的 `Db`。
+- **迁移**：启动时执行幂等 DDL（`CREATE TABLE/INDEX IF NOT EXISTS`、`ADD COLUMN IF NOT EXISTS`、`CREATE EXTENSION IF NOT EXISTS vector`）。
+- **备份**：`scripts/backup-db.sh`（每日 `pg_dump -Fc`，保留 30 天，可选上传 COS）、`scripts/restore-db.sh`（恢复到临时库后原子换名）；操作见 `docs/RUNBOOK.md`。
+- **预留**：pgvector 供混合检索（CS-017）；pg-boss 作业队列（同库，不引入 Redis）在异步作业计划中接入。
 
 ## 关键设计决策
 
@@ -60,5 +75,5 @@
 
 - 呼叫中心、视频客服按规划暂缓；呼入机器人与 AI 外呼没有真实线路，分别用文本模拟来电和大模型模拟外呼结果。
 - 检索为词法（BM25 + 二元组 + 改写重检），未接向量库；知识规模上千段后建议引入 embedding 混合召回。
-- 单机 SQLite，无多租户/账号体系；权限与审计只有 `audit_log` 记录。
+- 单机 PostgreSQL，无多租户；账号体系为三角色本地用户，审计只有 `audit_log` 记录。
 - 大模型输出存在非确定性；Benchmark 用于观察版本间趋势，不是一次通过即宣称能力成熟。
