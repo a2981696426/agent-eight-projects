@@ -61,6 +61,7 @@ const RULES: { methods: string[]; re: RegExp; roles: Role[]; label: string }[] =
   { methods: ['POST'], re: /^\/api\/knowledge\/docs\/[^/]+\/publish$/, roles: ['admin'], label: '知识发布' },
   { methods: ['POST'], re: /^\/api\/knowledge\/reindex-vectors$/, roles: ['admin'], label: '向量重建' },
   { methods: ['POST'], re: /^\/api\/whitelists/, roles: ['admin'], label: '白名单签发与发布' },
+  { methods: ['POST'], re: /^\/api\/platform\/[^/]+\/simulate$/, roles: ['admin'], label: '平台数据源故障模拟' },
   { methods: ['POST', 'PUT', 'DELETE'], re: /^\/api\/knowledge\//, roles: ['admin', 'analyst'], label: '知识维护' },
   { methods: ['PUT', 'POST', 'PATCH'], re: /^\/api\/quality\//, roles: ['admin', 'analyst'], label: '质检' },
   { methods: ['POST', 'DELETE'], re: /^\/api\/reports\//, roles: ['admin', 'analyst'], label: '报表' },

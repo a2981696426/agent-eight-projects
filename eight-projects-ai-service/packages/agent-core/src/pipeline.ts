@@ -242,7 +242,8 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     const userTexts = [intake.text, ...ctx.conversation.messages.filter((m) => m.role === 'user').map((m) => m.text).reverse()];
     for (const [i, t] of userTexts.entries()) {
       const src: Slot['source'] = i === 0 ? 'regex' : 'history';
-      put('orderId', t.match(/(?:订单|单号|order)?[号:：#\s]*\b(20\d{8,14})\b/i)?.[1] ?? null, src);
+      // 本地订单 20 开头 10~16 位；电商平台（天猫/淘宝）订单 16~19 位纯数字（CS-018）
+      put('orderId', t.match(/(?:订单|单号|order)?[号:：#\s]*\b(\d{16,19}|20\d{8,14})\b/i)?.[1] ?? null, src);
       put('trackingNo', t.match(/\b((?:SF|YT|JD|ZTO|STO|YD)\d{10,15})\b/i)?.[1]?.toUpperCase() ?? null, src);
       put('phone', t.match(/\b(1[3-9]\d{9})\b/)?.[1] ?? null, src);
       put('amount', t.match(/(?:¥|￥)?\s*(\d+(?:\.\d{1,2})?)\s*(?:元|块)/)?.[1] ?? null, src);
@@ -358,6 +359,14 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
     }
     // 工具之间相互独立，并发执行
     items.push(...(await Promise.all(runnable.map((r) => ctx.tools.execute(r.name, r.args, { conversationId: ctx.conversation.id, customerId: ctx.conversation.customerId, traceId: ctx.traceId }, ++seq)))));
+    // 外部数据源（电商平台等）不可用时工具以 { unavailable: true } 软失败返回：视为证据缺口，不计入完整度
+    for (const it of items) {
+      const d = it.data as { unavailable?: boolean; reason?: string } | null;
+      if (it.ok && d && d.unavailable === true) {
+        it.ok = false;
+        it.error = d.reason ?? '外部数据源不可用';
+      }
+    }
     const businessTools = pack.tools.filter((t) => agent.tools.includes(t));
     const attempted = items.filter((i) => businessTools.includes(i.tool));
     const okBusiness = attempted.filter((i) => i.ok).length;

@@ -5,6 +5,7 @@ import { BulbOutlined, EyeOutlined, FileTextOutlined, RobotOutlined, SendOutline
 import type { Conversation, Customer, HandoffTask, Message, SubCase, Trace } from '@eight/shared';
 import { api, fmtShort, fmtTime, useApi } from '../../api';
 import TraceViewer, { DecisionTag, RiskTag } from '../../components/TraceViewer';
+import PlatformOrderLookup from '../../components/PlatformOrderLookup';
 
 interface Detail {
   conversation: Conversation;
@@ -320,6 +321,11 @@ export default function OnlineService() {
                         {c.dms.pending && <Tag color="orange">待同步</Tag>}
                       </div>
                     )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无子案件；正式售后工单在 DMS" />,
+                  },
+                  {
+                    key: 'p',
+                    label: '平台订单',
+                    children: <PlatformOrderLookup initialOrderId={[...detail.messages].reverse().map((m) => m.text.match(/\b(\d{16,19})\b/)?.[1] ?? null).find(Boolean) ?? null} />,
                   },
                 ]}
               />

@@ -16,6 +16,7 @@ import { conversationRoutes } from './routes/conversations.ts';
 import { caseRoutes } from './routes/cases.ts';
 import { channelRoutes } from './routes/channels.ts';
 import { whitelistRoutes } from './routes/whitelists.ts';
+import { platformRoutes } from './routes/platform.ts';
 import { knowledgeRoutes } from './routes/knowledge.ts';
 import { agentRoutes } from './routes/agents.ts';
 import { aigcRoutes } from './routes/aigc.ts';
@@ -82,6 +83,7 @@ export async function buildServer() {
   await app.register(caseRoutes);
   await app.register(channelRoutes);
   await app.register(whitelistRoutes);
+  await app.register(platformRoutes);
   await app.register(knowledgeRoutes);
   await app.register(agentRoutes);
   await app.register(aigcRoutes);

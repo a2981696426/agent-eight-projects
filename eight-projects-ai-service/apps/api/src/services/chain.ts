@@ -8,6 +8,7 @@ import { DEFAULT_AGENT } from '../seed.ts';
 import { createCase } from '../routes/cases.ts';
 import { ensureHandoffTask, windowSentence } from './handoff.ts';
 import { whitelistFor } from './whitelist.ts';
+import { PlatformUnavailable, detectPlatformOrder, platformSourceFromEnv, type PlatformDataSource } from './platform-data.ts';
 
 const db = () => openDb();
 
@@ -22,6 +23,19 @@ function buildRouter() {
   return new LlmRouter(providers, env.router);
 }
 export const llm = buildRouter();
+
+/* ───────────── 电商平台只读数据源（CS-018）：本地库未命中且订单号为平台形态时作为证据来源 ───────────── */
+export const platformSource: PlatformDataSource | null = platformSourceFromEnv();
+async function platformLookup<T>(orderId: string, fn: (s: PlatformDataSource) => Promise<T | null>): Promise<{ hit: T | null; unavailable: boolean; source: string | null; reason?: string }> {
+  if (!platformSource || !detectPlatformOrder(orderId)) return { hit: null, unavailable: false, source: null };
+  const source = `${platformSource.platform}-${platformSource.mode}`;
+  try {
+    return { hit: await fn(platformSource), unavailable: false, source };
+  } catch (e) {
+    const kind = e instanceof PlatformUnavailable ? e.kind : 'error';
+    return { hit: null, unavailable: true, source, reason: `${kind}：${(e as Error).message}` };
+  }
+}
 
 /* ───────────── 知识索引：BM25（发布态 chunk）+ 向量（pgvector，供应商可用时） ───────────── */
 const bm25 = new BM25Index();
@@ -85,12 +99,18 @@ export const tools = new ToolRegistry()
   .register({
     name: 'orders.lookup',
     label: '订单查询',
-    description: '按订单号查询订单状态、金额、商品、地址',
+    description: '按订单号查询订单状态、金额、商品、地址（本地订单或电商平台只读数据）',
     requires: ['orderId'],
     run: async (a) => {
-      const o = await db().get('SELECT * FROM orders WHERE id=?', String(a.orderId));
-      if (!o) throw new Error(`订单 ${a.orderId} 不存在`);
-      return { orderId: o.id, product: o.product, sku: o.sku, listPrice: o.amount, paidAmount: o.paid_amount, status: o.status, createdAt: o.created_at, paidAt: o.paid_at, shippedAt: o.shipped_at, address: o.address, priceProtectDays: o.price_protect_days, belongsToCustomer: a.customerId ? o.customer_id === a.customerId : null };
+      const id = String(a.orderId);
+      const o = await db().get('SELECT * FROM orders WHERE id=?', id);
+      if (!o) {
+        const p = await platformLookup(id, (s) => s.getOrder(id));
+        if (p.hit === null && p.unavailable) return { orderId: id, unavailable: true, source: p.source, reason: p.reason, note: '电商平台数据暂不可用，无法核实订单' };
+        if (p.hit) return { orderId: p.hit.orderId, product: p.hit.items.map((i) => i.title).join('、'), sku: p.hit.items.map((i) => i.skuText).join('；'), listPrice: p.hit.amount, paidAmount: p.hit.paidAmount, status: p.hit.status, statusText: p.hit.statusText, createdAt: p.hit.createdAt, paidAt: p.hit.paidAt, shippedAt: p.hit.shippedAt, receiver: p.hit.receiver, buyerNick: p.hit.buyerNickMasked, source: p.hit.source, readOnly: true, belongsToCustomer: null };
+        throw new Error(`订单 ${id} 不存在${detectPlatformOrder(id) ? '（电商平台未查到）' : ''}`);
+      }
+      return { orderId: o.id, product: o.product, sku: o.sku, listPrice: o.amount, paidAmount: o.paid_amount, status: o.status, createdAt: o.created_at, paidAt: o.paid_at, shippedAt: o.shipped_at, address: o.address, priceProtectDays: o.price_protect_days, source: 'local', belongsToCustomer: a.customerId ? o.customer_id === a.customerId : null };
     },
   })
   .register({
@@ -99,10 +119,20 @@ export const tools = new ToolRegistry()
     description: '按订单号查询承运商、运单号、最新状态与轨迹',
     requires: ['orderId'],
     run: async (a) => {
-      const l = await db().get('SELECT * FROM logistics WHERE order_id=?', String(a.orderId));
+      const id = String(a.orderId);
+      const l = await db().get('SELECT * FROM logistics WHERE order_id=?', id);
       if (!l) {
-        const o = await db().get<{ status: string }>('SELECT status FROM orders WHERE id=?', String(a.orderId));
-        if (!o) throw new Error('订单不存在');
+        const o = await db().get<{ status: string }>('SELECT status FROM orders WHERE id=?', id);
+        if (!o) {
+          const p = await platformLookup(id, (s) => s.getLogistics(id));
+          if (p.unavailable) return { orderId: id, unavailable: true, source: p.source, reason: p.reason, note: '电商平台物流数据暂不可用' };
+          if (p.hit) return { orderId: id, carrier: p.hit.company, trackingNo: p.hit.trackingNo, status: p.hit.status, lastUpdate: p.hit.lastUpdate, hoursSinceUpdate: p.hit.hoursSinceUpdate, stalled: p.hit.stalled, events: p.hit.events, source: p.hit.source, readOnly: true };
+          if (p.source) {
+            const po = await platformLookup(id, (s) => s.getOrder(id));
+            if (po.hit) return { orderId: id, status: po.hit.status === 'WAIT_SELLER_SEND_GOODS' ? 'not_shipped' : 'no_logistics', note: po.hit.status === 'WAIT_SELLER_SEND_GOODS' ? '平台订单已付款尚未发货' : '平台暂无物流记录', source: po.hit.source };
+          }
+          throw new Error('订单不存在');
+        }
         return { orderId: a.orderId, status: o.status === 'paid' ? 'not_shipped' : 'no_logistics', note: o.status === 'paid' ? '订单已付款尚未发货' : '暂无物流记录' };
       }
       const hoursSinceUpdate = Math.round((Date.now() - new Date(String(l.last_update)).getTime()) / 36e5);
@@ -130,8 +160,14 @@ export const tools = new ToolRegistry()
     description: '按订单号查询退款申请、状态、金额、预计到账',
     requires: ['orderId'],
     run: async (a) => {
-      const rows = await db().all('SELECT * FROM refunds WHERE order_id=? ORDER BY applied_at DESC', String(a.orderId));
-      return { orderId: a.orderId, refunds: rows.map((r) => ({ id: r.id, type: r.type, amount: r.amount, status: r.status, appliedAt: r.applied_at, processedAt: r.processed_at, reason: r.reason, eta: r.channel_eta })), count: rows.length };
+      const id = String(a.orderId);
+      const rows = await db().all('SELECT * FROM refunds WHERE order_id=? ORDER BY applied_at DESC', id);
+      if (!rows.length && detectPlatformOrder(id)) {
+        const p = await platformLookup(id, (s) => s.getRefunds(id));
+        if (p.unavailable) return { orderId: id, unavailable: true, source: p.source, reason: p.reason, refunds: [], count: 0 };
+        if (p.hit) return { orderId: id, refunds: p.hit.map((r) => ({ id: r.refundId, type: 'refund', amount: r.amount, status: r.status, statusText: r.statusText, appliedAt: r.createdAt, processedAt: r.modifiedAt, reason: r.reason })), count: p.hit.length, source: p.hit[0]?.source ?? 'tmall', readOnly: true };
+      }
+      return { orderId: a.orderId, refunds: rows.map((r) => ({ id: r.id, type: r.type, amount: r.amount, status: r.status, appliedAt: r.applied_at, processedAt: r.processed_at, reason: r.reason, eta: r.channel_eta })), count: rows.length, source: 'local' };
     },
   })
   .register({
