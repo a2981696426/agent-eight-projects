@@ -175,6 +175,8 @@ CREATE INDEX IF NOT EXISTS idx_handoff_conv ON handoff_tasks(conversation_id, st
 CREATE TABLE IF NOT EXISTS dms_mock_tickets(ticket_no TEXT PRIMARY KEY, idem_key TEXT UNIQUE, case_id TEXT, payload TEXT, status TEXT, created_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS channel_identities(channel TEXT, external_user_id TEXT, customer_id TEXT, display_name TEXT, created_at TEXT, last_seen_at TEXT, PRIMARY KEY(channel, external_user_id));
 CREATE TABLE IF NOT EXISTS channel_messages(channel TEXT, external_msg_id TEXT, conversation_id TEXT, message_id TEXT, received_at TEXT, PRIMARY KEY(channel, external_msg_id));
+CREATE TABLE IF NOT EXISTS whitelists(id TEXT PRIMARY KEY, scope TEXT, version INTEGER, status TEXT, items TEXT, note TEXT, created_by TEXT, created_at TEXT, signed_by TEXT, signed_at TEXT, published_by TEXT, published_at TEXT, disabled_by TEXT, disabled_at TEXT, disabled_reason TEXT);
+CREATE INDEX IF NOT EXISTS idx_whitelists_scope ON whitelists(scope, status);
 DROP TABLE IF EXISTS tickets;
 CREATE TABLE IF NOT EXISTS knowledge_docs(id TEXT PRIMARY KEY, title TEXT, category TEXT, tags TEXT, content TEXT, status TEXT, version INTEGER, updated_at TEXT, source TEXT);
 CREATE TABLE IF NOT EXISTS knowledge_chunks(id TEXT PRIMARY KEY, doc_id TEXT, seq INTEGER, text TEXT, tags TEXT);

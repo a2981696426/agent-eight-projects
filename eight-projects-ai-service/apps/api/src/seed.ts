@@ -160,7 +160,7 @@ export async function seed(force = false) {
   const db = openDb();
   if (!force && (await db.count('customers')) > 0) return { seeded: false };
   await db.tx(async (tx) => {
-    for (const t of ['customers', 'orders', 'logistics', 'invoices', 'refunds', 'conversations', 'messages', 'traces', 'cases', 'handoff_tasks', 'dms_mock_tickets', 'knowledge_docs', 'knowledge_chunks', 'agents', 'agent_versions', 'quality_rules', 'quality_results', 'voc_items', 'ivr_flows', 'campaigns', 'saved_reports', 'aigc_jobs', 'benchmark_cases', 'benchmark_runs', 'audit_log', 'employee_runs']) await tx.run(`DELETE FROM ${t}`);
+    for (const t of ['customers', 'orders', 'logistics', 'invoices', 'refunds', 'conversations', 'messages', 'traces', 'cases', 'handoff_tasks', 'dms_mock_tickets', 'whitelists', 'knowledge_docs', 'knowledge_chunks', 'agents', 'agent_versions', 'quality_rules', 'quality_results', 'voc_items', 'ivr_flows', 'campaigns', 'saved_reports', 'aigc_jobs', 'benchmark_cases', 'benchmark_runs', 'audit_log', 'employee_runs']) await tx.run(`DELETE FROM ${t}`);
 
     const customers = [
       ['cust-001', '张伟', '13812340001', 'vip', 'taobao', ['复购', '糖友'], '2 次复购，偏好顺丰'],
@@ -229,6 +229,17 @@ export async function seed(force = false) {
       const docId = `kb-${String(i + 1).padStart(3, '0')}`;
       await tx.run('INSERT INTO knowledge_docs VALUES (?,?,?,?,?,?,?,?,?)', docId, k.title, k.category, J.str(k.tags), k.content, 'published', 1, nowIso(), 'import');
       for (const [seq, text] of chunkText(k.content).entries()) await tx.run('INSERT INTO knowledge_chunks VALUES (?,?,?,?,?)', `${docId}-c${seq + 1}`, docId, seq + 1, text, J.str(k.tags));
+    }
+
+    // 签发白名单（CS-015）：自有渠道全时段 v1；渠道平台非人工时段 v1；均已由售后负责人签发、管理员发布
+    const wlItems = [
+      { scenario: 'logistics', maxRisk: 'L1', note: '物流进度/催件只读' },
+      { scenario: 'invoice', maxRisk: 'L1', note: '开票进度与换开规则说明' },
+      { scenario: 'presale', maxRisk: 'L1', note: '已签发售前知识' },
+      { scenario: 'general', maxRisk: 'L1', note: '寒暄/通用引导' },
+    ];
+    for (const scope of ['owned', 'platform'] as const) {
+      await tx.run('INSERT INTO whitelists VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', uid('wl-'), scope, 1, 'published', J.str(wlItems), scope === 'owned' ? '自有渠道初版：全时段自动回复' : '渠道平台初版：仅非人工时段', '售后负责人', daysAgo(2), '售后负责人', daysAgo(2), '管理员', daysAgo(2), null, null, null);
     }
 
     // Agent

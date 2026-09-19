@@ -17,6 +17,7 @@ import type {
   StageId,
   StageRecord,
   Trace,
+  WhitelistGate,
 } from '@eight/shared';
 import { STAGE_LABELS } from '@eight/shared';
 import { LlmError, sumUsage, type LlmLike } from './llm.js';
@@ -40,6 +41,8 @@ export interface ChainContext {
   onStage?: (stage: StageRecord, trace: Trace) => void;
   /** 预计人工响应时窗文案（按工作日历与优先级档位计算；未提供时使用内置默认文案） */
   responseWindow?: (priority: Priority) => string;
+  /** 签发白名单门禁（CS-015）：提供时替代 agent.whitelistScenarios；版本记入 autonomy */
+  whitelist?: WhitelistGate;
 }
 
 const STAGE_ORDER: StageId[] = ['intake', 'completion', 'intent', 'evidence', 'knowledge', 'reasoning', 'risk', 'autonomy', 'reply'];
@@ -555,7 +558,10 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
   // ───────────────────────── 8. 自主处理 / 人工确认 / 升级 ─────────────────────────
   const autonomy = await stage('autonomy', async () => {
     const reasons: string[] = [];
-    const whitelistMatched = agent.whitelistScenarios.includes(pack.id);
+    // 签发白名单（CS-015）优先：按渠道范围与风险等级判定；未注入钩子时退回 Agent 配置的场景白名单
+    const gate = ctx.whitelist ? ctx.whitelist.allows(pack.id, riskValue.level) : null;
+    const whitelistMatched = gate ? gate.allowed : agent.whitelistScenarios.includes(pack.id);
+    if (gate && !gate.allowed) reasons.push(`白名单 ${ctx.whitelist!.version ?? '未签发'}：${gate.reason}`);
     const cap = minRisk(agent.maxAutoRisk, pack.maxAutoRisk);
     const action = reasoningValue.proposedAction;
     let decision: AutonomyResult['decision'];
@@ -597,7 +603,7 @@ export async function runChain(ctx: ChainContext, input: { text: string }): Prom
       if (riskRank(riskValue.level) > riskRank(cap)) reasons.push(`风险 ${riskValue.level} 超过自治上限 ${cap}`);
       if (!pack.allowedAutoActions.includes(action.type)) reasons.push(`动作 ${action.type} 不允许自动执行`);
     }
-    const value: AutonomyResult = { decision, priority, reasons, autoActionsExecuted: executed, whitelistMatched };
+    const value: AutonomyResult = { decision, priority, reasons, autoActionsExecuted: executed, whitelistMatched, whitelistVersion: ctx.whitelist ? ctx.whitelist.version : undefined };
     trace.autonomy = value;
     return { summary: `${decision === 'auto_reply' ? '自主回复' : decision === 'human_confirm' ? '人工确认' : `升级人工（${priority}）`}：${reasons.join('；')}`, detail: value as unknown as Record<string, unknown>, value };
   });

@@ -7,6 +7,7 @@ import { HybridRetriever, VectorStore } from './retriever.ts';
 import { DEFAULT_AGENT } from '../seed.ts';
 import { createCase } from '../routes/cases.ts';
 import { ensureHandoffTask, windowSentence } from './handoff.ts';
+import { whitelistFor } from './whitelist.ts';
 
 const db = () => openDb();
 
@@ -279,6 +280,7 @@ export async function runForConversation(conversationId: string, text: string, o
     onStage: opts.onStage,
     // 预计人工响应时窗按工作日历 + 优先级档位计算（CS-008G/I），与接续任务里记录的一致
     responseWindow: (p) => windowSentence(p),
+    whitelist: await whitelistFor(conv.channel),
   };
   const trace = await runChain(ctx, { text });
   await saveTrace(trace);
@@ -334,6 +336,8 @@ export async function runStandalone(text: string, opts: { agent?: AgentConfig; c
     customer,
     history: { slots: {}, scenario: null },
     traceId: uid('tr-'),
+    responseWindow: (p) => windowSentence(p),
+    whitelist: await whitelistFor(opts.channel ?? 'web'),
   };
   // 沙箱中不允许动作工具真正建单
   const sandboxTools = new ToolRegistry();

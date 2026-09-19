@@ -166,6 +166,41 @@ export interface AutonomyResult {
   reasons: string[];
   autoActionsExecuted: string[];
   whitelistMatched: boolean;
+  /** 本次门禁使用的白名单版本（如 owned@3）；无签发白名单时为 null */
+  whitelistVersion?: string | null;
+}
+
+/* ───────────── 白名单签发（CS-015 / ADR-0042 / CS-007） ───────────── */
+/** owned = 自有渠道（web/app/wechat，全时段）；platform = 渠道平台（非人工时段） */
+export type WhitelistScope = 'owned' | 'platform';
+export type WhitelistStatus = 'draft' | 'signed' | 'published' | 'disabled';
+export interface WhitelistItem {
+  scenario: string;
+  /** 该场景允许自动回复的风险上限 */
+  maxRisk: 'L0' | 'L1';
+  note?: string;
+}
+export interface Whitelist {
+  id: string;
+  scope: WhitelistScope;
+  version: number;
+  status: WhitelistStatus;
+  items: WhitelistItem[];
+  note: string;
+  createdBy: string;
+  createdAt: string;
+  signedBy: string | null;
+  signedAt: string | null;
+  publishedBy: string | null;
+  publishedAt: string | null;
+  disabledBy: string | null;
+  disabledAt: string | null;
+  disabledReason: string | null;
+}
+/** 注入执行链的门禁钩子 */
+export interface WhitelistGate {
+  version: string | null;
+  allows(scenario: string, risk: RiskLevel): { allowed: boolean; reason: string };
 }
 
 export interface Trace {
