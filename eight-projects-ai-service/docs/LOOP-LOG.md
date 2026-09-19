@@ -16,6 +16,7 @@
 | L8 | Firecrawl/Context7 调研 + 执行链提速 + 模型高可用 + SSE | Benchmark 同一 10 例前后对比；单测新增 5 条（重试/熔断/切换/降级/跳过推理）；e2e 新增 `ha.spec`（全部模型故障 → 访客端 <8s 收到受限模式回复并转人工 → Studio 显示演练 → 恢复）；`chain.spec` 断言流式进度芯片 | **Benchmark**：场景准确率 100%→100%，决策准确率 80%→90%，平均耗时 **8825ms→5399ms（−39%）**，模型调用 23→19，tokens 36.5k→27.1k（−26%）；缺槽位追问 5.4s→1.1s。发现问题：pnpm 根目录无 tsx 导致 `node --import tsx` 失败 → 生产启动改在 `apps/api` 目录执行 |
 | L9 | 发布形态：登录 + 三角色权限、API 托管前端、Dockerfile/compose、会话结束自动小记 | `auth.spec`（未登录跳转/坐席只读/退出拦截；API 401/403/200 与审计）；Playwright 改为 setup 项目登录并复用 storageState；本地以 `SERVE_WEB=1` 启动核对 `/`、SPA 回退、静态资源、API 鉴权 | 已登录态访问 `/login` 被重定向使页面用例误判 → 断言放宽；38 条 e2e 全绿 |
 | L10 | 数据层迁移 PostgreSQL（CS-013 / ADR-0041）：`db.ts` 改为异步驱动抽象——生产 `pg` 连 PostgreSQL 16 + pgvector，本机/测试用 PGlite（进程内 Postgres，零依赖）；`?` 占位符自动转 `$n`；全部 ~150 处调用点异步化；compose 增加 `pgvector/pgvector:pg16` 服务；备份/恢复脚本与运行手册 | `apps/api/test/db.test.ts` 6 条（占位符转换、建表、聚合返回 number、事务回滚、ON CONFLICT 幂等、undefined→NULL）；`/api/dashboard`、`/api/reports/run`、`/api/quality/report`、`/api/voc/overview` 冒烟核对数值类型；38 条 e2e 全绿（真实模型） | 方言问题清单：① `INSERT OR REPLACE/IGNORE` → `ON CONFLICT DO UPDATE/NOTHING`（traces/quality_rules/ivr_flows/voc_items）；② `ROUND(AVG(score),1)` 在 double 上无重载 → `::numeric`；③ 子查询必须有别名（agents 概览）；④ `day` 是时间单位关键字不能作裸别名（VoC 趋势）→ `AS day` + 显式分组表达式；⑤ int8/numeric 默认返回字符串 → 驱动层 type parser 转 number；⑥ 报表 `GROUP BY key/value` 改为 `dim_key/metric_value`；⑦ e2e 保存报表撞名（数据库跨轮次持久化）→ 用例改唯一名。Docker 守护进程本机未运行，compose 与备份脚本待服务器验证 |
+| L11 | 工单系统 → 子案件 + 人工接续任务 + DMS 模拟适配器（CS-003 / CS-008E-I / CS-016）：`cases` / `handoff_tasks` / `dms_mock_tickets` 表；`services/handoff.ts`（工作日历、P0/P1/P2 时窗、单活动任务、认领=接管）；`services/dms.ts`（`DmsAdapter` 契约 + Mock：幂等建单、unavailable/reject/account_cancelled 注入、状态推进）；`routes/cases.ts`（cases / handoffs / dms 三组接口）；执行链非自主决策自动建接续任务并用 `responseWindow` 钩子注入日历时窗；前端三 Tab 工作台与在线客服接续条 | 单测 7（日历/时窗/任务）+ 5（DMS Mock）+ 8（Fastify inject：建单→关联、待同步→重试、拒绝、回填、认领、control 联动、鉴权）；e2e 新增 `cases.spec`（DMS 不可用→待同步→重试；访客投诉→时窗文案→接续任务→认领跳转→同会话不新建）；浏览器核对三 Tab 与种子数据 | 多个 tsx watch 残留进程同时打开同一 PGlite 目录导致 `PGlite failed to initialize`（单进程约束）→ 清理后正常；e2e 三处断言收紧（antd Tag 与文本重复、Drawer 关闭按钮、真实模型下升级优先级不固定）；未做：P0 轮值告警投递（CS-008H）、跨渠道强锚点关联（CS-008F）、真实 DMS 适配器 |
 
 ## 复跑验证
 
@@ -24,5 +25,5 @@ pnpm install
 cp .env.example .env   # 填 LLM_API_KEY
 pnpm dev               # 终端 1：api 8787 + web 5173
 pnpm test              # agent-core 单测 12 条（不联网，含路由器重试/熔断/降级）
-pnpm e2e               # 终端 2：38 条 Playwright（先自动登录 admin），含真实模型调用与故障演练，约 3.5 分钟
+pnpm e2e               # 终端 2：40 条 Playwright（先自动登录 admin），含真实模型调用与故障演练，约 3.5 分钟
 ```

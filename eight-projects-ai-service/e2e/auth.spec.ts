@@ -6,14 +6,14 @@ test.describe('登录与角色权限', () => {
 
   test('未登录访问管理端跳转登录页；登录后回到来源页；退出后再次拦截', async ({ page }) => {
     const w = watchErrors(page);
-    await page.goto('/reception/tickets');
+    await page.goto('/reception/cases');
     await expect(page).toHaveURL(/\/login$/);
     await page.getByLabel('用户名').fill('agent');
     await page.getByLabel('密码').fill('agent123');
     await page.getByRole('button', { name: '登录' }).click();
-    await expect(page).toHaveURL(/\/reception\/tickets$/);
+    await expect(page).toHaveURL(/\/reception\/cases$/);
     await expect(page.getByText('客服小欧 · 欧态旗舰店')).toBeVisible();
-    await page.screenshot({ path: shot('auth-agent-tickets') });
+    await page.screenshot({ path: shot('auth-agent-cases') });
     // 坐席在 Agent Studio 看不到发布按钮
     await page.goto('/ai/agent-studio');
     await expect(page.getByText('只读：配置发布需管理员')).toBeVisible();
@@ -29,7 +29,7 @@ test.describe('登录与角色权限', () => {
 
   test('API：未登录 401；坐席发布 Agent 403；管理员 200；访客端接口无需登录', async () => {
     const anon = await pwRequest.newContext({ baseURL: API });
-    expect((await anon.get('/api/tickets')).status()).toBe(401);
+    expect((await anon.get('/api/cases')).status()).toBe(401);
     expect((await anon.get('/api/health')).status()).toBe(200);
     const conv = await (await anon.post('/api/conversations', { data: { channel: 'web', customerId: 'cust-002', title: '匿名访客', mode: 'bot' } })).json();
     expect(conv.id).toMatch(/^conv-/);
@@ -37,7 +37,8 @@ test.describe('登录与角色权限', () => {
     await anon.dispose();
 
     const agent = await loginApi('agent', 'agent123');
-    expect((await agent.get('/api/tickets')).status()).toBe(200);
+    expect((await agent.get('/api/cases')).status()).toBe(200);
+    expect((await agent.post('/api/dms/simulate', { data: { mode: 'normal' } })).status()).toBe(403);
     const forbidden = await agent.post('/api/agents/agent-cs-main/publish', { data: { note: 'e2e' } });
     expect(forbidden.status()).toBe(403);
     expect((await forbidden.json()).error).toMatch(/无权/);

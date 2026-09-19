@@ -44,7 +44,7 @@ export const ROUTES: { path: string; heading: RegExp }[] = [
   { path: '/reception/online', heading: /坐席工作台/ },
   { path: '/reception/call-center', heading: /呼叫中心/ },
   { path: '/reception/video', heading: /视频客服/ },
-  { path: '/reception/tickets', heading: /工单/ },
+  { path: '/reception/cases', heading: /工单协作|子案件/ },
   { path: '/ai/online-robot', heading: /在线机器人/ },
   { path: '/ai/inbound-robot', heading: /呼入机器人/ },
   { path: '/ai/outbound', heading: /外呼/ },

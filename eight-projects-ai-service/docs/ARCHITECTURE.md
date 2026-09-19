@@ -7,11 +7,11 @@
 | 系统基座 · 服务接待 | 在线客服 | `/reception/online` 坐席工作台（会话列表 / 聊天主区 / 客户 360 三栏，接管、转接、AI 建议、小记、分类、建单） | 可用 |
 | | 呼叫中心 | `/reception/call-center` | 暂缓（占位 + 接入依赖说明） |
 | | 视频客服 | `/reception/video` | 暂缓 |
-| | 工单系统 | `/reception/tickets` | 可用 |
+| | 工单协作（子案件 / 人工接续任务 / DMS 关联） | `/reception/cases` 三 Tab：接续任务（认领=接管会话）、子案件（关联 DMS / 回填 / 回读、待同步案件）、DMS 模拟（管理员：失败注入、重试待同步、推进状态） | 可用（DMS 为模拟适配器） |
 | 智能增强 | 在线机器人 | `/ai/online-robot` 访客端 + 执行链透视；`/visitor` 独立访客端（客户视角，记住会话、轮询人工回复、结束评价） | 可用 |
 | | 呼入机器人 | `/ai/inbound-robot` IVR 流程编辑 + 文本模拟来电接入执行链 | 可用（无线路/ASR） |
 | | AI 外呼 | `/ai/outbound` 任务/名单/话术，大模型模拟外呼结果回写 | 可用（模拟） |
-| | AIGC 应用 | `/ai/aigc` 小记、分类、工单抽取、应答建议、润色、FAQ 抽取、相似问 | 可用 |
+| | AIGC 应用 | `/ai/aigc` 小记、分类、子案件字段抽取、应答建议、润色、FAQ 抽取、相似问 | 可用 |
 | | Agent Studio | `/ai/agent-studio` 配置、测试台、Benchmark、版本/回滚 | 可用 |
 | | Mind Studio | `/ai/mind-studio` 资料、切块、发布、检索测试、批量导入、FAQ 抽取、使用追溯 | 可用 |
 | 服务管理 | 智能质检 | `/management/quality` 规则 + 语义质检、人机对比、复核 | 可用 |
@@ -53,6 +53,14 @@
 - **单端口生产模式**：`SERVE_WEB=1` 时 API 用 `@fastify/static` 托管 `apps/web/dist`，非 `/api` GET 回退 `index.html`。
 - **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 含 `postgres`（`pgvector/pgvector:pg16`，healthcheck）与 `ai-service`，读取 `.env`。
 - **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
+
+## 子案件、人工接续任务与 DMS 边界（L11，CS-003 / CS-008E-I / CS-016）
+
+- **DMS 是正式售后工单唯一权威**：本平台只持有 **子案件**（`cases`：单一服务目标的事实、证据包、协作轨迹）与 **人工接续任务**（`handoff_tasks`：Agent 无法完成时的内部待办），通过 `services/dms.ts` 的 `DmsAdapter` 契约创建/关联 DMS 工单并回读状态；本地状态只有 待人工 / 处理中 / 已关联 DMS / 已归档，没有"已解决 / 已关闭"。
+- **DMS 适配器**：`MockDmsAdapter`（默认，`DMS_MODE=mock`）与将来的真实实现共用同一契约；失败是业务结果（`unavailable` → 待同步案件、`rejected` / `account_cancelled` → 记录原因不改状态、`not_found` → 回填被拒）。建单以子案件 id 为幂等键。所有 DMS 写入都由坐席按钮触发，执行链只会 `cases.create` 拆本地子案件。
+- **人工接续任务**（`services/handoff.ts`）：执行链决策为 `human_confirm` / `escalate`、或坐席「转接」时创建；保存已完成阶段、证据、缺项、候选话术、失败原因、下一步；同一会话同一时刻只有一个活动任务（重复触发追加进度、优先级只升不降、沿用最早创建时间）；认领 = 接管会话（单一响应者）；会话结束或转回机器人时取消。
+- **预计人工响应时窗**：工作日历（`WORK_HOURS` / `WORK_DAYS` / `HOLIDAYS`，本地时区）+ 档位：P0 15 自然分钟、P1 2 工作小时、P2 1 个工作日（按工时折算）。文案只表示"预计开始接续"，P0 未取得告警回执时不说"已优先通知专人"。同一函数通过 `ChainContext.responseWindow` 注入最终回复，与任务上记录的一致。
+- **未做**：P0 轮值告警投递（CS-008H，`alert` 字段预留）、跨渠道强锚点关联（CS-008F）、真实 DMS 适配器（接口授权中）。
 
 ## 数据层（L10，CS-013 / ADR-0041）
 
