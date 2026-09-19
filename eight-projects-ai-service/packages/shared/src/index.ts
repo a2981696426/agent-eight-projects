@@ -311,6 +311,31 @@ export interface DmsTicket {
 }
 export type DmsMockMode = 'normal' | 'unavailable' | 'reject' | 'account_cancelled' | 'slow';
 
+/* ───────────── 渠道消息通道 / 渠道适配器（CS-012、CS-014） ───────────── */
+
+/** 入站消息归一化：适配器把渠道协议转成这个结构，通道不拥有任何客服决策 */
+export interface InboundMessage {
+  channel: Channel;
+  externalUserId: string;
+  externalMsgId: string;
+  kind: 'text' | 'image' | 'event';
+  text: string;
+  attachments: { type: 'image'; mediaId?: string; url?: string }[];
+  receivedAt: string;
+  displayName?: string;
+}
+export type SendFailure = 'window_expired' | 'unavailable' | 'rejected' | 'rate_limited' | 'not_configured';
+export type SendResult = { ok: true; externalMsgId: string | null } | { ok: false; kind: SendFailure; message: string; retryable: boolean };
+/** 写回 messages.meta.delivery：渠道投递结果，如实记录，不伪造送达 */
+export interface DeliveryInfo {
+  status: 'queued' | 'sent' | 'failed' | 'skipped';
+  at: string;
+  channel?: Channel;
+  externalMsgId?: string | null;
+  error?: string;
+  kind?: SendFailure;
+}
+
 export interface KnowledgeDoc {
   id: string;
   title: string;

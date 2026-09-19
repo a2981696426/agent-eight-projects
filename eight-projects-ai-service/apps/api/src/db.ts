@@ -173,6 +173,8 @@ CREATE INDEX IF NOT EXISTS idx_cases_conv ON cases(conversation_id);
 CREATE TABLE IF NOT EXISTS handoff_tasks(id TEXT PRIMARY KEY, conversation_id TEXT, case_id TEXT, channel TEXT, priority TEXT, status TEXT, reason TEXT, progress TEXT, trace_id TEXT, window_text TEXT, due_at TEXT, created_at TEXT, claimed_by TEXT, claimed_at TEXT, done_at TEXT, alert TEXT, history TEXT);
 CREATE INDEX IF NOT EXISTS idx_handoff_conv ON handoff_tasks(conversation_id, status);
 CREATE TABLE IF NOT EXISTS dms_mock_tickets(ticket_no TEXT PRIMARY KEY, idem_key TEXT UNIQUE, case_id TEXT, payload TEXT, status TEXT, created_at TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS channel_identities(channel TEXT, external_user_id TEXT, customer_id TEXT, display_name TEXT, created_at TEXT, last_seen_at TEXT, PRIMARY KEY(channel, external_user_id));
+CREATE TABLE IF NOT EXISTS channel_messages(channel TEXT, external_msg_id TEXT, conversation_id TEXT, message_id TEXT, received_at TEXT, PRIMARY KEY(channel, external_msg_id));
 DROP TABLE IF EXISTS tickets;
 CREATE TABLE IF NOT EXISTS knowledge_docs(id TEXT PRIMARY KEY, title TEXT, category TEXT, tags TEXT, content TEXT, status TEXT, version INTEGER, updated_at TEXT, source TEXT);
 CREATE TABLE IF NOT EXISTS knowledge_chunks(id TEXT PRIMARY KEY, doc_id TEXT, seq INTEGER, text TEXT, tags TEXT);
