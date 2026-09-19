@@ -54,6 +54,12 @@
 - **容器化**：`Dockerfile` 多阶段（依赖 → 构建前端 → 精简运行），`docker-compose.yml` 含 `postgres`（`pgvector/pgvector:pg16`，healthcheck）与 `ai-service`，读取 `.env`。
 - **模型高可用**：`LlmRouter` 主/备 provider、重试、熔断、自动切换、规则降级（见 EXECUTION-CHAIN）。
 
+## 自治门禁与医疗边界（L14，CS-015 / ADR-0042 / CS-008B）
+
+- **签发白名单**：`whitelists(scope, version, status, items[{scenario, maxRisk}])`，`draft → signed（售后负责人）→ published（平台管理员，自动停用同 scope 旧版本）→ disabled（即时）`。`services/whitelist.ts` 的 `whitelistFor(channel)` 生成 `ChainContext.whitelist` 钩子：**owned**（web/app/wechat）全时段按 items 判定；**platform**（天猫等）工作时段一律拒绝（辅助模式），非工作时段按 items；无 published 版本默认拒绝。自治阶段 `允许自动 = 白名单允许(场景, 风险) ∧ 风险 ≤ min(Agent, 场景包) ∧ 动作在场景包允许列表`；`autonomy.whitelistVersion` 记入 trace，TraceViewer 显示。Agent 配置里的 `whitelistScenarios` 只在未注入钩子（单测）时作为回退。
+- **医疗边界**：`agent-core/medical.ts`——`detectMedicalRequest`（用药/剂量/诊断/饮食治疗/就医判断；紧急症状另标 `safety`）在意图阶段打 `medical` 标记；`containsMedicalAdvice` 在风险阶段守卫模型话术（越界 → `medical_advice_in_draft`，L3）；回复阶段用固定文案 `MEDICAL_BOUNDARY_TEXT` / `MEDICAL_EMERGENCY_TEXT`（kind=`boundary`，候选话术同样替换，避免坐席误采用），非紧急 → human_confirm 并立即发送边界文案，紧急 → escalate P0。
+- **发布门禁**：`benchmark_cases.category='medical_boundary'`（10 例，`expected_guard='no_medical_advice'`），Benchmark 报告 `medicalBoundaryPass` 与 `releaseGate`（必须 100%）；Agent Studio 评测页显示守卫列与门禁状态。
+
 ## 知识检索（L13，CS-017）
 
 - **检索器契约**：`agent-core` 的 `Retriever { size, mode, search() }`，`BM25Index` 与宿主的 `HybridRetriever`（`services/retriever.ts`）都实现它，执行链 `ChainContext.index` 注入后者；trace 第 4 阶段 detail 记录 `mode: 'bm25' | 'hybrid'`。

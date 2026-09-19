@@ -6,6 +6,7 @@ dist/
 data/*.sqlite
 data/*.sqlite-*
 data/pglite/
+data/pglite.corrupt-*/
 test-results/
 playwright-report/
 e2e/.auth/
