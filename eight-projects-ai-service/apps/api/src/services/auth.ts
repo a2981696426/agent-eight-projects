@@ -45,6 +45,7 @@ export async function seedUsers() {
 /** 公开接口：健康检查、登录、访客端所需的最小集合 */
 const PUBLIC: { method?: string; re: RegExp }[] = [
   { re: /^\/api\/health$/ },
+  { re: /^\/api\/channels\/wechat\/webhook$/ },
   { re: /^\/api\/auth\/(login|logout|me)$/ },
   { method: 'POST', re: /^\/api\/conversations$/ },
   { method: 'GET', re: /^\/api\/conversations\/[^/]+$/ },
@@ -64,6 +65,7 @@ const RULES: { methods: string[]; re: RegExp; roles: Role[]; label: string }[] =
   { methods: ['POST'], re: /^\/api\/voc\/(analyze|ask)$/, roles: ['admin', 'analyst'], label: '客户之声分析' },
   { methods: ['POST'], re: /^\/api\/conversations\/[^/]+\/(control|assist|summary|classify|case)$/, roles: ['admin', 'agent'], label: '会话处理' },
   { methods: ['POST'], re: /^\/api\/dms\/(simulate|mock|retry-pending)/, roles: ['admin'], label: 'DMS 适配器管理' },
+  { methods: ['GET'], re: /^\/api\/channels\/wechat\/mock\//, roles: ['admin'], label: '渠道模拟记录' },
   { methods: ['POST', 'PATCH'], re: /^\/api\/(cases|handoffs)/, roles: ['admin', 'agent'], label: '子案件与接续任务处理' },
   { methods: ['POST', 'PUT'], re: /^\/api\/(ivr|outbound)\//, roles: ['admin', 'agent'], label: '机器人与外呼配置' },
   { methods: ['POST'], re: /^\/api\/aigc\//, roles: ['admin', 'agent', 'analyst'], label: 'AIGC' },
